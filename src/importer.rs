@@ -106,7 +106,9 @@ impl Importer {
         let import_source = ImportSource::parse(source)?;
 
         match import_source {
-            ImportSource::Git { url, branch } => self.import_from_git(&url, branch.as_deref(), registry, overwrite),
+            ImportSource::Git { url, branch } => {
+                self.import_from_git(&url, branch.as_deref(), registry, overwrite)
+            }
             ImportSource::Gist { id } => self.import_from_gist(&id, registry, overwrite),
             ImportSource::Url { url } => self.import_from_url(&url, registry, overwrite),
         }
@@ -144,15 +146,13 @@ impl Importer {
         // Look for manifest.json
         let manifest_path = clone_path.join("manifest.json");
         if !manifest_path.exists() {
-            anyhow::bail!(
-                "No manifest.json found in repository. Expected at root level."
-            );
+            anyhow::bail!("No manifest.json found in repository. Expected at root level.");
         }
 
         // Parse manifest
         let manifest_content = fs::read_to_string(&manifest_path)?;
-        let manifest: ToolManifest = serde_json::from_str(&manifest_content)
-            .context("Failed to parse manifest.json")?;
+        let manifest: ToolManifest =
+            serde_json::from_str(&manifest_content).context("Failed to parse manifest.json")?;
 
         // Check if tool exists
         if registry.get_tool(&manifest.name).is_some() && !overwrite {
@@ -188,7 +188,10 @@ impl Importer {
             tool_name,
             tool_type,
             source: url.to_string(),
-            message: format!("Successfully imported from git. Tool directory: {}", tool_dir.display()),
+            message: format!(
+                "Successfully imported from git. Tool directory: {}",
+                tool_dir.display()
+            ),
         })
     }
 
@@ -214,8 +217,8 @@ impl Importer {
             anyhow::bail!("Failed to fetch gist from GitHub API");
         }
 
-        let gist_json: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .context("Failed to parse gist response")?;
+        let gist_json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).context("Failed to parse gist response")?;
 
         // Check for errors
         if let Some(message) = gist_json.get("message") {
@@ -228,8 +231,8 @@ impl Importer {
             .context("No files in gist")?;
 
         // Require manifest.json for proper tool configuration
-        let manifest_file = files.get("manifest.json")
-            .ok_or_else(|| anyhow::anyhow!(
+        let manifest_file = files.get("manifest.json").ok_or_else(|| {
+            anyhow::anyhow!(
                 "Gist must contain a manifest.json file.\n\n\
                 Create a manifest.json with at minimum:\n\
                 {{\n  \
@@ -238,7 +241,8 @@ impl Importer {
                   \"tool_type\": \"script\",\n  \
                   \"interpreter\": \"python3\"\n\
                 }}"
-            ))?;
+            )
+        })?;
 
         // Download manifest
         let manifest_content = manifest_file
@@ -339,13 +343,17 @@ mod tests {
     #[test]
     fn test_parse_git_url() {
         let source = ImportSource::parse("https://github.com/user/repo").unwrap();
-        assert!(matches!(source, ImportSource::Git { url, branch: None } if url == "https://github.com/user/repo"));
+        assert!(
+            matches!(source, ImportSource::Git { url, branch: None } if url == "https://github.com/user/repo")
+        );
     }
 
     #[test]
     fn test_parse_git_url_with_branch() {
         let source = ImportSource::parse("https://github.com/user/repo#main").unwrap();
-        assert!(matches!(source, ImportSource::Git { url, branch: Some(b) } if url == "https://github.com/user/repo" && b == "main"));
+        assert!(
+            matches!(source, ImportSource::Git { url, branch: Some(b) } if url == "https://github.com/user/repo" && b == "main")
+        );
     }
 
     #[test]
@@ -360,4 +368,3 @@ mod tests {
         assert!(matches!(source, ImportSource::Gist { id } if id == "abc123"));
     }
 }
-

@@ -328,8 +328,14 @@ impl ToolRegistry {
             }
         }
 
-        let wasm_count = tools.values().filter(|t| *t.tool_type() == ToolType::Wasm).count();
-        let script_count = tools.values().filter(|t| *t.tool_type() == ToolType::Script).count();
+        let wasm_count = tools
+            .values()
+            .filter(|t| *t.tool_type() == ToolType::Wasm)
+            .count();
+        let script_count = tools
+            .values()
+            .filter(|t| *t.tool_type() == ToolType::Script)
+            .count();
         eprintln!(
             "Loaded {} tools ({} WASM, {} Script)",
             tools.len(),

@@ -85,11 +85,12 @@ impl PipelineExecutor {
         // Get the source value
         let source_value = match source {
             "input" => input,
-            "prev" => prev_output
-                .ok_or_else(|| anyhow::anyhow!("No previous step output available"))?,
-            step_name => step_results
-                .get(step_name)
-                .ok_or_else(|| anyhow::anyhow!("Step '{}' not found or not yet executed", step_name))?,
+            "prev" => {
+                prev_output.ok_or_else(|| anyhow::anyhow!("No previous step output available"))?
+            }
+            step_name => step_results.get(step_name).ok_or_else(|| {
+                anyhow::anyhow!("Step '{}' not found or not yet executed", step_name)
+            })?,
         };
 
         // Navigate the path
@@ -199,7 +200,8 @@ mod tests {
         let input = serde_json::json!({"name": "test", "count": 42});
         let step_results = HashMap::new();
 
-        let resolved = PipelineExecutor::resolve_variable("input.name", &input, &step_results, None).unwrap();
+        let resolved =
+            PipelineExecutor::resolve_variable("input.name", &input, &step_results, None).unwrap();
         assert_eq!(resolved, serde_json::json!("test"));
     }
 
@@ -209,7 +211,9 @@ mod tests {
         let step_results = HashMap::new();
         let prev = serde_json::json!({"result": "success", "data": [1, 2, 3]});
 
-        let resolved = PipelineExecutor::resolve_variable("prev.result", &input, &step_results, Some(&prev)).unwrap();
+        let resolved =
+            PipelineExecutor::resolve_variable("prev.result", &input, &step_results, Some(&prev))
+                .unwrap();
         assert_eq!(resolved, serde_json::json!("success"));
     }
 
@@ -217,9 +221,13 @@ mod tests {
     fn test_resolve_step_variable() {
         let input = serde_json::json!({});
         let mut step_results = HashMap::new();
-        step_results.insert("fetch".to_string(), serde_json::json!({"url": "http://example.com"}));
+        step_results.insert(
+            "fetch".to_string(),
+            serde_json::json!({"url": "http://example.com"}),
+        );
 
-        let resolved = PipelineExecutor::resolve_variable("fetch.url", &input, &step_results, None).unwrap();
+        let resolved =
+            PipelineExecutor::resolve_variable("fetch.url", &input, &step_results, None).unwrap();
         assert_eq!(resolved, serde_json::json!("http://example.com"));
     }
 
@@ -234,10 +242,13 @@ mod tests {
         });
 
         let resolved = PipelineExecutor::resolve_args(&args, &input, &step_results, None).unwrap();
-        assert_eq!(resolved, serde_json::json!({
-            "content": "hello world",
-            "prefix": ">>> "
-        }));
+        assert_eq!(
+            resolved,
+            serde_json::json!({
+                "content": "hello world",
+                "prefix": ">>> "
+            })
+        );
     }
 
     #[test]
@@ -246,7 +257,13 @@ mod tests {
         let step_results = HashMap::new();
         let prev = serde_json::json!({"success": true});
 
-        let result = PipelineExecutor::evaluate_condition("$prev.success == true", &input, &step_results, Some(&prev)).unwrap();
+        let result = PipelineExecutor::evaluate_condition(
+            "$prev.success == true",
+            &input,
+            &step_results,
+            Some(&prev),
+        )
+        .unwrap();
         assert!(result);
     }
 
@@ -256,7 +273,9 @@ mod tests {
         let step_results = HashMap::new();
         let prev = serde_json::json!({"data": [1, 2, 3]});
 
-        let result = PipelineExecutor::evaluate_condition("$prev.data", &input, &step_results, Some(&prev)).unwrap();
+        let result =
+            PipelineExecutor::evaluate_condition("$prev.data", &input, &step_results, Some(&prev))
+                .unwrap();
         assert!(result);
     }
 
@@ -264,19 +283,24 @@ mod tests {
     fn test_resolve_deeply_nested_variable() {
         let input = serde_json::json!({});
         let mut step_results = HashMap::new();
-        step_results.insert("api".to_string(), serde_json::json!({
-            "response": {
-                "data": {
-                    "users": [
-                        {"name": "Alice", "email": "alice@example.com"},
-                        {"name": "Bob", "email": "bob@example.com"}
-                    ]
+        step_results.insert(
+            "api".to_string(),
+            serde_json::json!({
+                "response": {
+                    "data": {
+                        "users": [
+                            {"name": "Alice", "email": "alice@example.com"},
+                            {"name": "Bob", "email": "bob@example.com"}
+                        ]
+                    }
                 }
-            }
-        }));
+            }),
+        );
 
         // Test deep nesting like $api.response.data.users
-        let resolved = PipelineExecutor::resolve_variable("api.response.data", &input, &step_results, None).unwrap();
+        let resolved =
+            PipelineExecutor::resolve_variable("api.response.data", &input, &step_results, None)
+                .unwrap();
         assert!(resolved.get("users").is_some());
     }
 
@@ -287,7 +311,8 @@ mod tests {
         let prev = serde_json::json!({"count": 5, "items": ["a", "b", "c"]});
 
         // Test $prev without field access (whole output)
-        let resolved = PipelineExecutor::resolve_variable("prev", &input, &step_results, Some(&prev)).unwrap();
+        let resolved =
+            PipelineExecutor::resolve_variable("prev", &input, &step_results, Some(&prev)).unwrap();
         assert_eq!(resolved["count"], 5);
         assert_eq!(resolved["items"][0], "a");
     }
@@ -296,10 +321,13 @@ mod tests {
     fn test_resolve_args_with_nested_variables() {
         let input = serde_json::json!({"config": {"timeout": 30}});
         let mut step_results = HashMap::new();
-        step_results.insert("fetch".to_string(), serde_json::json!({
-            "body": {"message": "Hello"},
-            "status": 200
-        }));
+        step_results.insert(
+            "fetch".to_string(),
+            serde_json::json!({
+                "body": {"message": "Hello"},
+                "status": 200
+            }),
+        );
 
         let args = serde_json::json!({
             "data": "$fetch.body",
@@ -335,7 +363,13 @@ mod tests {
         let step_results = HashMap::new();
         let prev = serde_json::json!({"status": 404});
 
-        let result = PipelineExecutor::evaluate_condition("$prev.status != 200", &input, &step_results, Some(&prev)).unwrap();
+        let result = PipelineExecutor::evaluate_condition(
+            "$prev.status != 200",
+            &input,
+            &step_results,
+            Some(&prev),
+        )
+        .unwrap();
         assert!(result);
     }
 
@@ -345,7 +379,13 @@ mod tests {
         let step_results = HashMap::new();
         let prev = serde_json::json!({"status": "success"});
 
-        let result = PipelineExecutor::evaluate_condition("$prev.status == success", &input, &step_results, Some(&prev)).unwrap();
+        let result = PipelineExecutor::evaluate_condition(
+            "$prev.status == success",
+            &input,
+            &step_results,
+            Some(&prev),
+        )
+        .unwrap();
         assert!(result);
     }
 }

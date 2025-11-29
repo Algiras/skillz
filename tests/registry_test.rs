@@ -100,8 +100,11 @@ mod directory_structure {
         });
 
         let manifest_path = tool_dir.join("manifest.json");
-        std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap())
-            .expect("Failed to write manifest");
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .expect("Failed to write manifest");
 
         // Verify structure
         assert!(tool_dir.exists());

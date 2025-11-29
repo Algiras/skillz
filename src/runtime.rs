@@ -500,15 +500,14 @@ impl ToolRuntime {
             .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found", tool_name))?;
 
         let args_value = args.unwrap_or(Value::Object(serde_json::Map::new()));
-        
+
         // Use spawn_blocking because call_tool is sync and may block
         let runtime = self.clone();
         let config_clone = config.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            runtime.call_tool(&config_clone, args_value)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
+        let result =
+            tokio::task::spawn_blocking(move || runtime.call_tool(&config_clone, args_value))
+                .await
+                .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
 
         Ok(result)
     }
@@ -553,9 +552,7 @@ impl ToolRuntime {
         // Ensure arguments is an object, not a string
         // (MCP sometimes passes args as stringified JSON)
         let arguments = match &args {
-            Value::String(s) => {
-                serde_json::from_str(s).unwrap_or(args.clone())
-            }
+            Value::String(s) => serde_json::from_str(s).unwrap_or(args.clone()),
             _ => args,
         };
 
@@ -563,10 +560,7 @@ impl ToolRuntime {
         let request = JsonRpcRequest {
             jsonrpc: "2.0",
             method: "execute".to_string(),
-            params: ExecuteParams {
-                arguments,
-                context,
-            },
+            params: ExecuteParams { arguments, context },
             id: 1,
         };
 

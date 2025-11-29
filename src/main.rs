@@ -253,17 +253,14 @@ impl AppState {
         let wasm_deps = builder::Builder::parse_dependencies(&deps);
 
         // Compile with dependencies
-        let wasm_bytes = match builder::Builder::compile_tool_with_deps(
-            &args.name,
-            &args.code,
-            &wasm_deps,
-        ) {
-            Ok(path) => match std::fs::read(&path) {
-                Ok(bytes) => bytes,
-                Err(e) => return format!("Error reading compiled WASM: {}", e),
-            },
-            Err(e) => return format!("Compilation error: {}", e),
-        };
+        let wasm_bytes =
+            match builder::Builder::compile_tool_with_deps(&args.name, &args.code, &wasm_deps) {
+                Ok(path) => match std::fs::read(&path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return format!("Error reading compiled WASM: {}", e),
+                },
+                Err(e) => return format!("Compilation error: {}", e),
+            };
 
         // Build manifest
         let mut manifest = registry::ToolManifest::new(
@@ -280,7 +277,10 @@ impl AppState {
         manifest.wasm_dependencies = deps.clone();
 
         // Also save the source code so the tool can be recompiled
-        match self.registry.register_wasm_tool(manifest, &wasm_bytes, &args.code) {
+        match self
+            .registry
+            .register_wasm_tool(manifest, &wasm_bytes, &args.code)
+        {
             Ok(config) => {
                 let tool_dir = config.tool_dir.display();
                 let deps_msg = if deps.is_empty() {
@@ -476,11 +476,16 @@ impl AppState {
     }
 
     /// Execute a pipeline tool
-    async fn execute_pipeline(&self, tool: &registry::ToolConfig, input: serde_json::Value) -> String {
+    async fn execute_pipeline(
+        &self,
+        tool: &registry::ToolConfig,
+        input: serde_json::Value,
+    ) -> String {
         let start_time = std::time::Instant::now();
         let steps = tool.pipeline_steps();
 
-        let mut step_results: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+        let mut step_results: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
         let mut prev_output: Option<serde_json::Value> = None;
         let mut results: Vec<pipeline::StepResult> = Vec::new();
         let mut pipeline_success = true;
@@ -490,7 +495,12 @@ impl AppState {
 
             // Check condition
             if let Some(ref condition) = step.condition {
-                match pipeline::PipelineExecutor::evaluate_condition(condition, &input, &step_results, prev_output.as_ref()) {
+                match pipeline::PipelineExecutor::evaluate_condition(
+                    condition,
+                    &input,
+                    &step_results,
+                    prev_output.as_ref(),
+                ) {
                     Ok(true) => {}
                     Ok(false) => {
                         results.push(pipeline::StepResult {
@@ -524,7 +534,12 @@ impl AppState {
             }
 
             // Resolve arguments
-            let resolved_args = match pipeline::PipelineExecutor::resolve_args(&step.args, &input, &step_results, prev_output.as_ref()) {
+            let resolved_args = match pipeline::PipelineExecutor::resolve_args(
+                &step.args,
+                &input,
+                &step_results,
+                prev_output.as_ref(),
+            ) {
                 Ok(args) => args,
                 Err(e) => {
                     results.push(pipeline::StepResult {
@@ -545,7 +560,10 @@ impl AppState {
             };
 
             // Execute the step's tool
-            let result = self.runtime.call_tool_by_name(&step.tool, Some(resolved_args), &self.registry).await;
+            let result = self
+                .runtime
+                .call_tool_by_name(&step.tool, Some(resolved_args), &self.registry)
+                .await;
             let duration_ms = step_start.elapsed().as_millis() as u64;
 
             let (success, output, error) = match result {
@@ -553,9 +571,7 @@ impl AppState {
                     // Result is already a Value, no parsing needed
                     (true, output_value, None)
                 }
-                Err(e) => {
-                    (false, serde_json::json!(null), Some(e.to_string()))
-                }
+                Err(e) => (false, serde_json::json!(null), Some(e.to_string())),
             };
 
             let step_result = pipeline::StepResult {
@@ -589,7 +605,11 @@ impl AppState {
             "## {} Pipeline '{}' {}\n\n**Duration:** {}ms\n\n### Steps:\n\n",
             if pipeline_success { "✅" } else { "❌" },
             tool.name(),
-            if pipeline_success { "Completed" } else { "Failed" },
+            if pipeline_success {
+                "Completed"
+            } else {
+                "Failed"
+            },
             total_duration_ms
         );
 
@@ -659,7 +679,9 @@ impl AppState {
                 let interpreter = tool.interpreter().unwrap_or("executable");
                 output.push_str(&format!(
                     "• **{}** [{}] - {}\n",
-                    tool.name(), interpreter, tool.description()
+                    tool.name(),
+                    interpreter,
+                    tool.description()
                 ));
             }
             output.push('\n');
@@ -887,7 +909,10 @@ CRITICAL for Python scripts: Use sys.stdin.readline() NOT sys.stdin.read()! read
                     );
                     manifest.interpreter = args.interpreter.clone();
 
-                    match self.registry.register_tool(manifest, args.content.as_bytes()) {
+                    match self
+                        .registry
+                        .register_tool(manifest, args.content.as_bytes())
+                    {
                         Ok(config) => {
                             output.push_str(&format!(
                                 "🎉 **Skill `{}` created successfully!**\n\n",
@@ -1113,11 +1138,15 @@ CRITICAL for Python scripts: Use sys.stdin.readline() NOT sys.stdin.read()! read
 
         let importer = importer::Importer::new(self.registry.storage_dir().to_path_buf());
 
-        match importer.import(&args.source, &self.registry, args.overwrite.unwrap_or(false)) {
+        match importer.import(
+            &args.source,
+            &self.registry,
+            args.overwrite.unwrap_or(false),
+        ) {
             Ok(result) => {
                 // Reload registry to pick up the new tool immediately
                 self.registry.reload();
-                
+
                 format!(
                     "✅ **Tool Imported Successfully**\n\n\
                     - **Name:** {}\n\
@@ -1184,10 +1213,20 @@ create_pipeline(
             if self.registry.get_tool(&step.tool).is_none() {
                 // Check if it's a built-in tool
                 let built_in_tools = [
-                    "build_tool", "register_script", "create_skill", "import_tool",
-                    "call_tool", "list_tools", "complete", "execute_code",
-                    "install_deps", "delete_tool", "test_validate",
-                    "create_pipeline", "list_pipelines", "delete_pipeline"
+                    "build_tool",
+                    "register_script",
+                    "create_skill",
+                    "import_tool",
+                    "call_tool",
+                    "list_tools",
+                    "complete",
+                    "execute_code",
+                    "install_deps",
+                    "delete_tool",
+                    "test_validate",
+                    "create_pipeline",
+                    "list_pipelines",
+                    "delete_pipeline",
                 ];
                 if !built_in_tools.contains(&step.tool.as_str()) {
                     return format!(
@@ -1262,9 +1301,17 @@ create_pipeline(
             output.push_str(&format!(
                 "### {}\n- **Description:** {}\n- **Steps:** {}\n- **Tags:** {}\n\n",
                 p.name(),
-                if p.description().is_empty() { "(none)" } else { p.description() },
+                if p.description().is_empty() {
+                    "(none)"
+                } else {
+                    p.description()
+                },
                 p.pipeline_steps().len(),
-                if p.manifest.tags.is_empty() { "(none)".to_string() } else { p.manifest.tags.join(", ") }
+                if p.manifest.tags.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    p.manifest.tags.join(", ")
+                }
             ));
         }
 
@@ -1276,7 +1323,10 @@ create_pipeline(
         // Verify it's actually a pipeline
         if let Some(tool) = self.registry.get_tool(&args.name) {
             if *tool.tool_type() != ToolType::Pipeline {
-                return format!("⚠️ '{}' is not a pipeline. Use delete_tool instead.", args.name);
+                return format!(
+                    "⚠️ '{}' is not a pipeline. Use delete_tool instead.",
+                    args.name
+                );
             }
         }
 
@@ -1554,7 +1604,9 @@ call_tool(tool_name: "my_tool", arguments: {...})
                     let interp = tool.interpreter().unwrap_or("executable");
                     guide.push_str(&format!(
                         "- **{}** [{}] - {}\n",
-                        tool.name(), interp, tool.description()
+                        tool.name(),
+                        interp,
+                        tool.description()
                     ));
                     guide.push_str(&format!(
                         "  ```\n  call_tool(tool_name: \"{}\")\n  ```\n\n",

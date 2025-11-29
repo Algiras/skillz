@@ -35,13 +35,13 @@ mod gist_parsing {
             "https://gist.github.com/user/abc123",
             "https://gist.githubusercontent.com/user/abc123/raw/file.txt",
         ];
-        
+
         let non_gist_urls = vec![
             "https://github.com/user/repo",
             "https://example.com/gist/abc123",
             "git:abc123",
         ];
-        
+
         for url in gist_urls {
             assert!(
                 url.starts_with("gist:") || url.contains("gist.github"),
@@ -49,7 +49,7 @@ mod gist_parsing {
                 url
             );
         }
-        
+
         for url in non_gist_urls {
             assert!(
                 !url.starts_with("gist:") && !url.contains("gist.github"),
@@ -125,7 +125,7 @@ mod manifest_validation {
     fn test_valid_wasm_manifest() {
         let manifest = json!({
             "name": "calculator",
-            "version": "1.0.0", 
+            "version": "1.0.0",
             "description": "Math calculator",
             "type": "wasm",
             "entry_file": "tool.wasm",
@@ -178,7 +178,9 @@ mod manifest_validation {
         });
 
         assert!(manifest["annotations"]["readOnlyHint"].as_bool().unwrap());
-        assert!(!manifest["annotations"]["destructiveHint"].as_bool().unwrap());
+        assert!(!manifest["annotations"]["destructiveHint"]
+            .as_bool()
+            .unwrap());
     }
 
     #[test]
@@ -270,4 +272,3 @@ mod output_parsing {
         assert_eq!(step_output["status"], 200);
     }
 }
-

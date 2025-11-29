@@ -315,7 +315,7 @@ sys.stdout.flush()
     assert!(output.status.success());
 
     let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    
+
     // Verify structured output is preserved
     assert_eq!(response["result"]["count"], 42);
     assert_eq!(response["result"]["items"][0], "a");
