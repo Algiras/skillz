@@ -4,6 +4,7 @@ mod memory;
 mod pipeline;
 mod registry;
 mod runtime;
+mod templates;
 mod watcher;
 
 use anyhow::Result;
@@ -89,6 +90,7 @@ struct AppState {
     registry: registry::ToolRegistry,
     runtime: runtime::ToolRuntime,
     memory: memory::Memory,
+    template_registry: templates::TemplateRegistry,
     tool_router: ToolRouter<Self>,
     /// Shared peer for sending logging notifications
     peer: SharedPeer,
@@ -182,6 +184,73 @@ struct VersionArgs {
 
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+enum TemplateAction {
+    #[serde(rename = "list")]
+    List,
+    #[serde(rename = "info")]
+    Info,
+    #[serde(rename = "use")]
+    Use,
+    #[serde(rename = "create")]
+    Create,
+    #[serde(rename = "delete")]
+    Delete,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct TemplateArgs {
+    /// Action: 'list', 'info', 'use', 'create', 'delete'
+    action: TemplateAction,
+    /// Template name (for 'info', 'use', 'delete')
+    name: Option<String>,
+    /// Category filter (for 'list'): api, data, file, utility, integration, custom
+    category: Option<String>,
+    /// Variables to substitute in template (for 'use')
+    /// Must include 'tool_name' at minimum
+    variables: Option<std::collections::HashMap<String, String>>,
+    /// Template definition (for 'create')
+    template: Option<TemplateDefinition>,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct TemplateDefinition {
+    /// Template description
+    description: String,
+    /// Category: api, data, file, utility, integration, custom
+    category: Option<String>,
+    /// Tool type: python, node, wasm, pipeline
+    tool_type: String,
+    /// Template variables with descriptions
+    variables: Vec<TemplateVariableArg>,
+    /// The template code with {{variable}} placeholders
+    code: String,
+    /// Dependencies (pip packages for Python, npm for Node, crates for WASM)
+    #[serde(default)]
+    dependencies: Vec<String>,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct TemplateVariableArg {
+    /// Variable name (used as {{name}} in template)
+    name: String,
+    /// Description of what this variable is for
+    description: String,
+    /// Default value if not provided
+    default: Option<String>,
+    /// Whether this variable is required
+    #[serde(default = "default_true")]
+    required: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
 struct CallToolArgs {
     tool_name: String,
     arguments: Option<serde_json::Value>,
@@ -269,8 +338,10 @@ impl AppState {
         registry: registry::ToolRegistry,
         mut runtime: runtime::ToolRuntime,
         memory: memory::Memory,
+        storage_dir: std::path::PathBuf,
     ) -> Self {
         let peer: SharedPeer = Arc::new(RwLock::new(None));
+        let templates_dir = storage_dir.join("templates");
 
         // Set up logging handler that forwards to MCP peer
         let peer_for_logging = peer.clone();
@@ -403,6 +474,7 @@ impl AppState {
             registry,
             runtime,
             memory,
+            template_registry: templates::TemplateRegistry::new(templates_dir),
             tool_router: Self::tool_router(),
             peer,
             client_caps: Arc::new(RwLock::new(McpClientCapabilities::default())),
@@ -673,6 +745,341 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
                         )
                     }
                     None => format!("Tool '{}' not found", name),
+                }
+            }
+        }
+    }
+
+    // ==================== TEMPLATES ====================
+
+    #[tool(
+        description = "Use and create templates to quickly build tools. Templates are shareable and stored on disk.
+
+Actions: 'list' (show templates), 'info' (template details), 'use' (create tool), 'create' (new template), 'delete' (remove custom template)
+
+Categories: api, data, file, utility, integration, custom
+
+Example use: template(action: \"use\", name: \"api_client\", variables: {\"tool_name\": \"my_api\", \"base_url\": \"https://api.github.com\"})"
+    )]
+    async fn template(&self, Parameters(args): Parameters<TemplateArgs>) -> String {
+        match args.action {
+            TemplateAction::List => {
+                let templates = if let Some(cat_str) = args.category {
+                    let category = match cat_str.to_lowercase().as_str() {
+                        "api" => templates::TemplateCategory::Api,
+                        "data" => templates::TemplateCategory::Data,
+                        "file" => templates::TemplateCategory::File,
+                        "utility" => templates::TemplateCategory::Utility,
+                        "integration" => templates::TemplateCategory::Integration,
+                        "custom" => templates::TemplateCategory::Custom,
+                        _ => return format!("Unknown category: {}. Use: api, data, file, utility, integration, custom", cat_str),
+                    };
+                    self.template_registry.list_by_category(&category)
+                } else {
+                    self.template_registry.list()
+                };
+
+                if templates.is_empty() {
+                    return "No templates found.".to_string();
+                }
+
+                let mut output = format!("## 📋 Available Templates ({})\n\n", templates.len());
+                for t in templates {
+                    output.push_str(&format!(
+                        "### `{}`\n- **Description:** {}\n- **Category:** {:?}\n- **Type:** {:?}\n- **Variables:** {}\n\n",
+                        t.name,
+                        t.description,
+                        t.category,
+                        t.tool_type,
+                        t.variable_names().join(", ")
+                    ));
+                }
+                output.push_str("\n💡 Use `template(action: \"info\", name: \"...\")` for details");
+                output
+            }
+            TemplateAction::Info => {
+                let name = match args.name {
+                    Some(n) => n,
+                    None => return "❌ name is required for 'info' action".to_string(),
+                };
+
+                match self.template_registry.get(&name) {
+                    Some(t) => {
+                        let mut output = format!("## 📄 Template: `{}`\n\n", t.name);
+                        output.push_str(&format!("**Description:** {}\n\n", t.description));
+                        output.push_str(&format!("**Category:** {:?}\n", t.category));
+                        output.push_str(&format!("**Creates:** {:?} tool\n\n", t.tool_type));
+
+                        output.push_str("### Variables\n\n");
+                        for var in &t.variables {
+                            let required = if var.required { " *(required)*" } else { "" };
+                            let default = var
+                                .default
+                                .as_ref()
+                                .map(|d| format!(" (default: `{}`)", d))
+                                .unwrap_or_default();
+                            output.push_str(&format!(
+                                "- `{}`: {}{}{}\n",
+                                var.name, var.description, required, default
+                            ));
+                        }
+
+                        if !t.dependencies.is_empty() {
+                            output.push_str(&format!(
+                                "\n### Dependencies\n{}\n",
+                                t.dependencies.join(", ")
+                            ));
+                        }
+
+                        if let Some(ref example) = t.example {
+                            output.push_str(&format!("\n### Example\n```\n{}\n```\n", example));
+                        }
+
+                        output
+                    }
+                    None => format!("❌ Template '{}' not found", name),
+                }
+            }
+            TemplateAction::Use => {
+                let name = match args.name {
+                    Some(n) => n,
+                    None => return "❌ name is required for 'use' action".to_string(),
+                };
+
+                let vars = match args.variables {
+                    Some(v) => v,
+                    None => return "❌ variables is required for 'use' action. Must include at least 'tool_name'.".to_string(),
+                };
+
+                let tool_name = match vars.get("tool_name") {
+                    Some(n) => n.clone(),
+                    None => return "❌ variables must include 'tool_name'".to_string(),
+                };
+
+                // Check if tool already exists
+                if self.registry.get_tool(&tool_name).is_some() {
+                    return format!(
+                        "❌ Tool '{}' already exists. Choose a different name.",
+                        tool_name
+                    );
+                }
+
+                let template = match self.template_registry.get(&name) {
+                    Some(t) => t.clone(),
+                    None => return format!("❌ Template '{}' not found", name),
+                };
+
+                // Render the template
+                let code = match template.render(&vars) {
+                    Ok(c) => c,
+                    Err(e) => return format!("❌ Template error: {}", e),
+                };
+
+                // Create the tool based on template type
+                match template.tool_type {
+                    templates::TemplateToolType::Python => {
+                        let mut manifest = registry::ToolManifest::new(
+                            tool_name.clone(),
+                            vars.get("description")
+                                .cloned()
+                                .unwrap_or(template.description.clone()),
+                            ToolType::Script,
+                        );
+                        manifest.interpreter = Some("python3".to_string());
+                        manifest.dependencies = template.dependencies.clone();
+
+                        match self.registry.register_tool(manifest, code.as_bytes()) {
+                            Ok(_) => {
+                                let deps_msg = if !template.dependencies.is_empty() {
+                                    format!("\n\n⚠️ Run `call_tool(tool_name: \"{}\")` once to install dependencies: {}", 
+                                        tool_name, template.dependencies.join(", "))
+                                } else {
+                                    String::new()
+                                };
+                                format!("✅ Created Python tool '{}' from template '{}'!{}\n\nUse: `call_tool(tool_name: \"{}\")`", 
+                                    tool_name, name, deps_msg, tool_name)
+                            }
+                            Err(e) => format!("❌ Failed to create tool: {}", e),
+                        }
+                    }
+                    templates::TemplateToolType::Node => {
+                        let mut manifest = registry::ToolManifest::new(
+                            tool_name.clone(),
+                            vars.get("description")
+                                .cloned()
+                                .unwrap_or(template.description.clone()),
+                            ToolType::Script,
+                        );
+                        manifest.interpreter = Some("node".to_string());
+                        manifest.dependencies = template.dependencies.clone();
+
+                        match self.registry.register_tool(manifest, code.as_bytes()) {
+                            Ok(_) => format!("✅ Created Node.js tool '{}' from template '{}'!\n\nUse: `call_tool(tool_name: \"{}\")`", 
+                                tool_name, name, tool_name),
+                            Err(e) => format!("❌ Failed to create tool: {}", e),
+                        }
+                    }
+                    templates::TemplateToolType::Wasm => {
+                        // For WASM, we need to compile the code
+                        let deps_strings = template.dependencies.clone();
+                        let wasm_deps = builder::Builder::parse_dependencies(&deps_strings);
+                        let wasm_bytes = match builder::Builder::compile_tool_with_deps(
+                            &tool_name, &code, &wasm_deps,
+                        ) {
+                            Ok(path) => match std::fs::read(&path) {
+                                Ok(bytes) => bytes,
+                                Err(e) => return format!("❌ Failed to read compiled WASM: {}", e),
+                            },
+                            Err(e) => return format!("❌ Compilation error: {}", e),
+                        };
+
+                        let mut manifest = registry::ToolManifest::new(
+                            tool_name.clone(),
+                            vars.get("description")
+                                .cloned()
+                                .unwrap_or(template.description.clone()),
+                            ToolType::Wasm,
+                        );
+                        manifest.wasm_dependencies = deps_strings;
+
+                        match self.registry.register_wasm_tool(manifest, &wasm_bytes, &code) {
+                            Ok(_) => format!("✅ Created WASM tool '{}' from template '{}'!\n\nUse: `call_tool(tool_name: \"{}\")`", 
+                                tool_name, name, tool_name),
+                            Err(e) => format!("❌ Failed to create tool: {}", e),
+                        }
+                    }
+                    templates::TemplateToolType::Pipeline => {
+                        // For pipelines, parse the JSON and create the pipeline
+                        let pipeline_def: serde_json::Value = match serde_json::from_str(&code) {
+                            Ok(v) => v,
+                            Err(e) => return format!("❌ Invalid pipeline JSON: {}", e),
+                        };
+
+                        let steps_value = pipeline_def
+                            .get("steps")
+                            .cloned()
+                            .unwrap_or(serde_json::json!([]));
+                        let steps: Vec<registry::PipelineStep> =
+                            match serde_json::from_value(steps_value) {
+                                Ok(s) => s,
+                                Err(e) => return format!("❌ Invalid pipeline steps: {}", e),
+                            };
+
+                        let description = pipeline_def
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&template.description)
+                            .to_string();
+
+                        let manifest = registry::ToolManifest::new_pipeline(
+                            tool_name.clone(),
+                            description,
+                            steps,
+                        );
+
+                        match self.registry.register_tool(manifest, &[]) {
+                            Ok(_) => format!("✅ Created Pipeline '{}' from template '{}'!\n\nUse: `call_tool(tool_name: \"{}\")`", 
+                                tool_name, name, tool_name),
+                            Err(e) => format!("❌ Failed to create pipeline: {}", e),
+                        }
+                    }
+                }
+            }
+            TemplateAction::Create => {
+                let name = match args.name {
+                    Some(n) => n,
+                    None => return "❌ name is required for 'create' action".to_string(),
+                };
+
+                let def = match args.template {
+                    Some(d) => d,
+                    None => {
+                        return "❌ template definition is required for 'create' action".to_string()
+                    }
+                };
+
+                // Check if template already exists (and is not builtin)
+                if self.template_registry.get(&name).is_some()
+                    && self.template_registry.is_builtin(&name)
+                {
+                    return format!("❌ Cannot overwrite builtin template '{}'", name);
+                }
+
+                // Parse category
+                let category = match def.category.as_deref().unwrap_or("custom") {
+                    "api" => templates::TemplateCategory::Api,
+                    "data" => templates::TemplateCategory::Data,
+                    "file" => templates::TemplateCategory::File,
+                    "utility" => templates::TemplateCategory::Utility,
+                    "integration" => templates::TemplateCategory::Integration,
+                    _ => templates::TemplateCategory::Custom,
+                };
+
+                // Parse tool type
+                let tool_type = match def.tool_type.to_lowercase().as_str() {
+                    "python" | "python3" => templates::TemplateToolType::Python,
+                    "node" | "nodejs" | "javascript" => templates::TemplateToolType::Node,
+                    "wasm" | "rust" => templates::TemplateToolType::Wasm,
+                    "pipeline" => templates::TemplateToolType::Pipeline,
+                    _ => {
+                        return format!(
+                            "❌ Unknown tool_type: {}. Use: python, node, wasm, pipeline",
+                            def.tool_type
+                        )
+                    }
+                };
+
+                // Build the template
+                let template = templates::Template {
+                    name: name.clone(),
+                    description: def.description,
+                    category,
+                    tool_type,
+                    variables: def
+                        .variables
+                        .into_iter()
+                        .map(|v| templates::TemplateVariable {
+                            name: v.name,
+                            description: v.description,
+                            default: v.default,
+                            required: v.required,
+                        })
+                        .collect(),
+                    code: def.code,
+                    dependencies: def.dependencies,
+                    example: None,
+                };
+
+                // Save to filesystem
+                match self.template_registry.clone().create(template) {
+                    Ok(_) => format!(
+                        "✅ Created template '{}'!\n\n\
+                        📁 Saved to: {}\n\n\
+                        Use it with:\n\
+                        ```\n\
+                        template(action: \"use\", name: \"{}\", variables: {{\"tool_name\": \"my_tool\", ...}})\n\
+                        ```",
+                        name,
+                        self.template_registry.templates_dir().join(format!("{}.json", name)).display(),
+                        name
+                    ),
+                    Err(e) => format!("❌ Failed to create template: {}", e),
+                }
+            }
+            TemplateAction::Delete => {
+                let name = match args.name {
+                    Some(n) => n,
+                    None => return "❌ name is required for 'delete' action".to_string(),
+                };
+
+                if self.template_registry.is_builtin(&name) {
+                    return format!("❌ Cannot delete builtin template '{}'. Only custom templates can be deleted.", name);
+                }
+
+                match self.template_registry.clone().delete(&name) {
+                    Ok(true) => format!("🗑️ Template '{}' deleted successfully", name),
+                    Ok(false) => format!("⚠️ Template '{}' not found", name),
+                    Err(e) => format!("❌ Failed to delete template: {}", e),
                 }
             }
         }
@@ -2187,7 +2594,7 @@ async fn main() -> Result<()> {
 
     eprintln!("Memory database initialized (with runtime integration)");
 
-    let state = AppState::new(registry, runtime, memory);
+    let state = AppState::new(registry, runtime, memory, storage_dir.clone());
 
     // Start hot reload if enabled
     let _hot_reload = if cli.hot_reload {

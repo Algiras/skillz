@@ -2,7 +2,7 @@
 
 # 🚀 Skillz - Self-Extending MCP Server
 
-<img src="docs/hero-banner.png" alt="Skillz Hero Banner" width="100%">
+<img src="docs/architecture.png" alt="Skillz Architecture" width="100%">
 
 [![Crates.io](https://img.shields.io/crates/v/skillz.svg)](https://crates.io/crates/skillz)
 [![CI](https://github.com/Algiras/skillz/actions/workflows/ci.yml/badge.svg)](https://github.com/Algiras/skillz/actions/workflows/ci.yml)
@@ -203,10 +203,11 @@ curl -X POST http://localhost:8080/message \
 | 📊 **Logging/Progress** | Scripts can send logs and progress updates |
 | 🔥 **Hot Reload** | Watch tools directory, auto-reload on changes |
 | 📦 **Versioning** | Auto-backup on update, rollback to any version |
+| 📋 **Templates** | Pre-built tool patterns, create & share custom templates |
 
 ---
 
-## 📖 Available Tools (10 Core)
+## 📖 Available Tools (11 Core)
 
 | Tool | Description |
 |------|-------------|
@@ -220,6 +221,7 @@ curl -X POST http://localhost:8080/message \
 | `pipeline` | Create, list, delete pipeline tools (action-based) |
 | `memory` | Persistent storage for tools (store, get, list, delete, stats) |
 | `version` | List versions, rollback to previous, view version info |
+| `template` | Use/create tool templates (list, info, use, create, delete) |
 
 ---
 
