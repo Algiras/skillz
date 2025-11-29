@@ -6,14 +6,6 @@ This document tracks planned features and ideas for future development.
 
 ## 🚀 High Priority (Next Up)
 
-### Persistent Tool State
-Allow tools to save/load state between calls:
-```python
-state = context.get_state()
-state["counter"] = state.get("counter", 0) + 1
-context.save_state(state)
-```
-
 ---
 
 ## 🎯 Medium Priority
@@ -21,11 +13,6 @@ context.save_state(state)
 ### Tool Result Streaming
 - Stream large outputs progressively
 - Real-time feedback for long operations
-
-### Hot Reload
-- Watch tool directories for changes
-- Automatically reload modified tools
-- Notify clients of updates
 
 ### Tool Templates
 Pre-built templates for common patterns:
@@ -91,6 +78,9 @@ Support compiling from other languages to WASM:
 - [x] Tool import from Git repos and GitHub Gists
 - [x] **Pipelines** - Chain tools together (pipelines ARE tools!)
 - [x] **HTTP Transport with SSE** - Run as web service with multiple clients
+- [x] **Persistent Memory** - Key-value storage for tools (libSQL backend)
+- [x] **Elicitation** - Scripts can request user input via MCP protocol
+- [x] **Hot Reload** - Watch tools directory for changes, auto-reload
 
 ---
 

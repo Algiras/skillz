@@ -150,6 +150,12 @@ skillz --transport http --port 8080
 
 # Custom host binding
 skillz --transport http --host 0.0.0.0 --port 3000
+
+# Enable hot reload (watch tools directory for changes)
+skillz --hot-reload
+
+# HTTP server with hot reload
+skillz --transport http --port 8080 --hot-reload
 ```
 
 **Endpoints:**
@@ -195,6 +201,7 @@ curl -X POST http://localhost:8080/message \
 | 💬 **Elicitation** | Scripts can request user input via MCP protocol |
 | 🧠 **Memory** | Persistent key-value storage for tools |
 | 📊 **Logging/Progress** | Scripts can send logs and progress updates |
+| 🔥 **Hot Reload** | Watch tools directory, auto-reload on changes |
 
 ---
 

@@ -4,6 +4,7 @@ mod memory;
 mod pipeline;
 mod registry;
 mod runtime;
+mod watcher;
 
 use anyhow::Result;
 use clap::Parser;
@@ -59,6 +60,10 @@ struct Cli {
     /// Host to bind for HTTP transport
     #[arg(long, default_value = "127.0.0.1")]
     host: String,
+
+    /// Enable hot reload - watch tools directory for changes
+    #[arg(long, default_value = "false")]
+    hot_reload: bool,
 }
 
 use rmcp::service::Peer;
@@ -2042,10 +2047,59 @@ async fn main() -> Result<()> {
     
     let state = AppState::new(registry, runtime, memory);
 
+    // Start hot reload if enabled
+    let _hot_reload = if cli.hot_reload {
+        match watcher::HotReload::start(storage_dir.clone()).await {
+            Ok(mut hr) => {
+                let registry_clone = state.registry.clone();
+                // Spawn task to handle reload events
+                tokio::spawn(async move {
+                    while let Some(event) = hr.next_event().await {
+                        match event {
+                            watcher::WatchEvent::ToolModified(name) => {
+                                eprintln!("🔄 Hot reload: {} modified, reloading...", name);
+                                if let Err(e) = registry_clone.reload_tool(&name) {
+                                    eprintln!("   ❌ Failed to reload {}: {}", name, e);
+                                } else {
+                                    eprintln!("   ✅ {} reloaded successfully", name);
+                                }
+                            }
+                            watcher::WatchEvent::ToolAdded(name) => {
+                                eprintln!("🆕 Hot reload: {} added, loading...", name);
+                                if let Err(e) = registry_clone.reload_tool(&name) {
+                                    eprintln!("   ❌ Failed to load {}: {}", name, e);
+                                } else {
+                                    eprintln!("   ✅ {} loaded successfully", name);
+                                }
+                            }
+                            watcher::WatchEvent::ToolRemoved(name) => {
+                                eprintln!("🗑️ Hot reload: {} removed", name);
+                                registry_clone.unload_tool(&name);
+                            }
+                            watcher::WatchEvent::Error(e) => {
+                                eprintln!("⚠️ Hot reload error: {}", e);
+                            }
+                        }
+                    }
+                });
+                Some(())
+            }
+            Err(e) => {
+                eprintln!("⚠️ Failed to start hot reload: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     match cli.transport.as_str() {
         "stdio" => {
             eprintln!("Skillz MCP started (stdio transport)");
-    state.serve(stdio()).await?.waiting().await?;
+            if cli.hot_reload {
+                eprintln!("🔥 Hot reload enabled");
+            }
+            state.serve(stdio()).await?.waiting().await?;
         }
         "http" | "sse" => {
             use rmcp::transport::sse_server::{SseServer, SseServerConfig};
@@ -2065,6 +2119,9 @@ async fn main() -> Result<()> {
             eprintln!("Skillz MCP started (HTTP/SSE transport)");
             eprintln!("  SSE endpoint: http://{}/sse", addr);
             eprintln!("  POST endpoint: http://{}/message", addr);
+            if cli.hot_reload {
+                eprintln!("  🔥 Hot reload: enabled");
+            }
             eprintln!();
             eprintln!("Connect with:");
             eprintln!(

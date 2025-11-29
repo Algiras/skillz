@@ -728,4 +728,24 @@ impl ToolRegistry {
             Ok(false)
         }
     }
+
+    /// Reload a tool from disk (for hot reload)
+    pub fn reload_tool(&self, name: &str) -> Result<()> {
+        let tool_dir = self.storage_dir.join(name);
+        if !tool_dir.exists() {
+            anyhow::bail!("Tool directory does not exist: {}", tool_dir.display());
+        }
+        
+        // Load the tool from its directory
+        self.load_tool_from_dir(&tool_dir)?;
+        eprintln!("Reloaded tool: {}", name);
+        Ok(())
+    }
+
+    /// Unload a tool from memory (but keep files on disk)
+    pub fn unload_tool(&self, name: &str) {
+        let mut tools = self.tools.write().unwrap();
+        tools.remove(name);
+        eprintln!("Unloaded tool: {}", name);
+    }
 }
