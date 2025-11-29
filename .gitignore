@@ -1,0 +1,23 @@
+# Build artifacts
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tools directory (runtime generated)
+/tools/
+
+# Logs
+*.log
+
+# Test artifacts
+*.wasm

@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+  build-release:
+    name: Build Release
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: mcp-wasm-host
+            asset_name: mcp-wasm-host-linux-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: mcp-wasm-host
+            asset_name: mcp-wasm-host-macos-aarch64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: mcp-wasm-host
+            asset_name: mcp-wasm-host-macos-x86_64
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }},wasm32-wasip1
+    
+    - name: Build release
+      run: cargo build --release --target ${{ matrix.target }}
+    
+    - name: Strip binary (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+    
+    - name: Compress binary
+      run: |
+        cd target/${{ matrix.target }}/release
+        tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.artifact_name }}
+        mv ${{ matrix.asset_name }}.tar.gz ../../../
+    
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ./${{ matrix.asset_name }}.tar.gz
+        asset_name: ${{ matrix.asset_name }}.tar.gz
+        asset_content_type: application/gzip

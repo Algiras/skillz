@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Skillz - Self-Extending MCP Server</title>
+    <meta name="description" content="Build and execute custom AI tools at runtime. Let your AI create its own tools with WASM and any scripting language.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-tertiary: #1a1a25;
+            --bg-card: #16161f;
+            --accent-primary: #7c3aed;
+            --accent-secondary: #a855f7;
+            --accent-glow: rgba(124, 58, 237, 0.4);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border: #2d2d3a;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --code-bg: #1e1e2e;
+            --rust-orange: #f97316;
+            --python-blue: #3b82f6;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Animated background */
+        .bg-pattern {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            background: 
+                radial-gradient(ellipse at 20% 20%, rgba(124, 58, 237, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(168, 85, 247, 0.06) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 50%, rgba(59, 130, 246, 0.04) 0%, transparent 60%);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Header */
+        header {
+            padding: 1.5rem 0;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(10, 10, 15, 0.8);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            z-index: 100;
+        }
+
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .logo-icon {
+            font-size: 1.8rem;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--accent-secondary);
+        }
+
+        .github-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.6rem 1.2rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .github-btn:hover {
+            background: var(--accent-primary);
+            border-color: var(--accent-primary);
+        }
+
+        /* Hero */
+        .hero {
+            padding: 10rem 0 6rem;
+            text-align: center;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(124, 58, 237, 0.15);
+            border: 1px solid rgba(124, 58, 237, 0.3);
+            border-radius: 100px;
+            font-size: 0.9rem;
+            color: var(--accent-secondary);
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: clamp(2.5rem, 6vw, 4.5rem);
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+        }
+
+        h1 .gradient {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary), #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hero-subtitle {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto 3rem;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem 2rem;
+            border-radius: 12px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.3s;
+            font-size: 1rem;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            color: white;
+            box-shadow: 0 4px 20px var(--accent-glow);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px var(--accent-glow);
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-card);
+            border-color: var(--accent-primary);
+        }
+
+        /* Features */
+        .features {
+            padding: 6rem 0;
+        }
+
+        .section-title {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .section-title h2 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .section-title p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 2rem;
+            transition: all 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--accent-primary);
+            box-shadow: 0 8px 30px rgba(124, 58, 237, 0.15);
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-card h3 {
+            font-size: 1.25rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .feature-card p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        /* Code Example */
+        .code-section {
+            padding: 6rem 0;
+        }
+
+        .code-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .code-tab {
+            padding: 0.75rem 1.5rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px 8px 0 0;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .code-tab.active {
+            background: var(--code-bg);
+            border-bottom-color: var(--code-bg);
+            color: var(--text-primary);
+        }
+
+        .code-tab:hover:not(.active) {
+            color: var(--text-primary);
+        }
+
+        .code-block {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 0 12px 12px 12px;
+            overflow: hidden;
+        }
+
+        .code-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            background: rgba(0, 0, 0, 0.3);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .code-lang {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .code-content {
+            padding: 1.5rem;
+            overflow-x: auto;
+        }
+
+        pre {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.7;
+        }
+
+        code {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .keyword { color: #c678dd; }
+        .function { color: #61afef; }
+        .string { color: #98c379; }
+        .comment { color: #5c6370; font-style: italic; }
+        .number { color: #d19a66; }
+
+        /* Architecture */
+        .architecture {
+            padding: 6rem 0;
+        }
+
+        .arch-diagram {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 3rem;
+            text-align: center;
+        }
+
+        .arch-diagram pre {
+            color: var(--accent-secondary);
+            font-size: 0.85rem;
+            display: inline-block;
+            text-align: left;
+        }
+
+        /* How it works */
+        .how-it-works {
+            padding: 6rem 0;
+        }
+
+        .steps {
+            display: grid;
+            gap: 2rem;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .step {
+            display: flex;
+            gap: 1.5rem;
+            align-items: flex-start;
+        }
+
+        .step-number {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .step-content h3 {
+            margin-bottom: 0.5rem;
+        }
+
+        .step-content p {
+            color: var(--text-secondary);
+        }
+
+        /* Footer */
+        footer {
+            padding: 4rem 0 2rem;
+            border-top: 1px solid var(--border);
+            text-align: center;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .footer-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .footer-links a:hover {
+            color: var(--accent-secondary);
+        }
+
+        .footer-bottom {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+            }
+
+            .hero {
+                padding: 8rem 0 4rem;
+            }
+
+            .hero-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .arch-diagram {
+                padding: 1.5rem;
+                overflow-x: auto;
+            }
+
+            .arch-diagram pre {
+                font-size: 0.7rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-pattern"></div>
+
+    <header>
+        <nav class="container">
+            <div class="logo">
+                <span class="logo-icon">⚡</span>
+                Skillz
+            </div>
+            <ul class="nav-links">
+                <li><a href="#features">Features</a></li>
+                <li><a href="#examples">Examples</a></li>
+                <li><a href="#how-it-works">How it Works</a></li>
+            </ul>
+            <a href="https://github.com/anthropics/skillz" class="github-btn" target="_blank">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                </svg>
+                GitHub
+            </a>
+        </nav>
+    </header>
+
+    <section class="hero">
+        <div class="container">
+            <div class="hero-badge">
+                🚀 MCP Server for Dynamic Tool Creation
+            </div>
+            <h1>
+                Let Your AI<br>
+                <span class="gradient">Build Its Own Tools</span>
+            </h1>
+            <p class="hero-subtitle">
+                Skillz is a self-extending MCP server. Create WASM tools from Rust or register scripts in any language—Python, Node.js, Ruby, Bash—at runtime.
+            </p>
+            <div class="hero-buttons">
+                <a href="#examples" class="btn btn-primary">
+                    Get Started →
+                </a>
+                <a href="https://github.com/anthropics/skillz" class="btn btn-secondary" target="_blank">
+                    View on GitHub
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <section class="features" id="features">
+        <div class="container">
+            <div class="section-title">
+                <h2>Powerful Features</h2>
+                <p>Everything you need to build dynamic AI tools</p>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🦀</div>
+                    <h3>WASM Tools (Rust)</h3>
+                    <p>Compile Rust code to WebAssembly at runtime. Tools run in a secure sandbox with memory isolation and near-native performance.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📜</div>
+                    <h3>Script Tools (Any Language)</h3>
+                    <p>Register tools in Python, Node.js, Ruby, Bash, or any language. Scripts communicate via JSON-RPC 2.0 protocol.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔧</div>
+                    <h3>Sequential Creation</h3>
+                    <p>Build skills step-by-step with guided workflow: Design → Implement → Test → Finalize. Perfect for complex tools.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📡</div>
+                    <h3>Full MCP Protocol</h3>
+                    <p>Resources, roots, logging, progress updates, elicitation, and sampling support. Works with Cursor, Claude Desktop, and more.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">💾</div>
+                    <h3>Persistent Tools</h3>
+                    <p>Once created, tools persist across server restarts. Build your toolbox over time.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>Secure Sandbox</h3>
+                    <p>WASM tools run in isolated WebAssembly environment. Scripts execute as separate processes with filtered environment.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="code-section" id="examples">
+        <div class="container">
+            <div class="section-title">
+                <h2>Simple to Use</h2>
+                <p>Create tools with just a few lines of code</p>
+            </div>
+            <div class="code-tabs">
+                <button class="code-tab active" data-lang="rust">🦀 Rust (WASM)</button>
+                <button class="code-tab" data-lang="python">🐍 Python</button>
+                <button class="code-tab" data-lang="nodejs">💚 Node.js</button>
+            </div>
+            <div class="code-block">
+                <div class="code-header">
+                    <span class="code-lang">
+                        <span id="lang-icon">🦀</span>
+                        <span id="lang-name">Rust WASM Tool</span>
+                    </span>
+                </div>
+                <div class="code-content">
+                    <pre id="code-example"><code><span class="comment">// Build a Fibonacci generator</span>
+<span class="function">build_tool</span>(
+  <span class="string">name</span>: <span class="string">"fibonacci"</span>,
+  <span class="string">code</span>: <span class="string">"fn main() {
+    let mut a = 0u64;
+    let mut b = 1;
+    for _ in 0..20 {
+        print!(\"{} \", a);
+        let t = a + b;
+        a = b;
+        b = t;
+    }
+}"</span>,
+  <span class="string">description</span>: <span class="string">"Generates Fibonacci numbers"</span>
+)</code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="architecture">
+        <div class="container">
+            <div class="section-title">
+                <h2>Architecture</h2>
+                <p>Clean, modular design</p>
+            </div>
+            <div class="arch-diagram">
+                <pre>
+┌─────────────────────────────────────────────────────────────┐
+│                    AI Assistant (Claude, etc.)               │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ MCP Protocol
+┌───────────────────────────▼─────────────────────────────────┐
+│                     Skillz MCP Server                        │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐ │
+│  │   WASM Tools    │  │  Script Tools   │  │  Sequential  │ │
+│  │  (Rust → WASM)  │  │ (Any Language)  │  │   Creation   │ │
+│  └─────────────────┘  └─────────────────┘  └──────────────┘ │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │              Tool Registry & Runtime                    ││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+                </pre>
+            </div>
+        </div>
+    </section>
+
+    <section class="how-it-works" id="how-it-works">
+        <div class="container">
+            <div class="section-title">
+                <h2>How It Works</h2>
+                <p>From code to execution in seconds</p>
+            </div>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3>Write Code</h3>
+                        <p>AI writes Rust code for WASM tools or scripts in any language (Python, Node.js, etc.)</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3>Compile & Register</h3>
+                        <p>WASM tools are compiled using cargo. Scripts are saved with appropriate interpreter.</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>Execute</h3>
+                        <p>WASM runs in Wasmtime sandbox. Scripts execute via subprocess with JSON-RPC 2.0 protocol.</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h3>Persist</h3>
+                        <p>Tools are stored on disk and available across server restarts. Build your AI's toolbox over time.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <div class="footer-links">
+                <a href="https://github.com/anthropics/skillz">GitHub</a>
+                <a href="https://github.com/anthropics/skillz/blob/main/README.md">Documentation</a>
+                <a href="https://github.com/anthropics/skillz/blob/main/CONTRIBUTING.md">Contributing</a>
+                <a href="https://github.com/anthropics/skillz/blob/main/LICENSE">License</a>
+            </div>
+            <div class="footer-bottom">
+                Built with ❤️ for AI-powered development
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Code tab switching
+        const codeExamples = {
+            rust: {
+                icon: '🦀',
+                name: 'Rust WASM Tool',
+                code: `<span class="comment">// Build a Fibonacci generator</span>
+<span class="function">build_tool</span>(
+  <span class="string">name</span>: <span class="string">"fibonacci"</span>,
+  <span class="string">code</span>: <span class="string">"fn main() {
+    let mut a = 0u64;
+    let mut b = 1;
+    for _ in 0..20 {
+        print!(\\"{}\\", a);
+        let t = a + b;
+        a = b;
+        b = t;
+    }
+}"</span>,
+  <span class="string">description</span>: <span class="string">"Generates Fibonacci numbers"</span>
+)`
+            },
+            python: {
+                icon: '🐍',
+                name: 'Python Script Tool',
+                code: `<span class="comment"># Register a Python word counter</span>
+<span class="function">register_script</span>(
+  <span class="string">name</span>: <span class="string">"word_count"</span>,
+  <span class="string">interpreter</span>: <span class="string">"python3"</span>,
+  <span class="string">code</span>: <span class="string">"""#!/usr/bin/env python3
+import json, sys
+
+request = json.loads(sys.stdin.read())
+text = request['params']['arguments'].get('text', '')
+result = {'words': len(text.split()), 'chars': len(text)}
+print(json.dumps({'jsonrpc': '2.0', 'result': result, 'id': request['id']}))
+"""</span>,
+  <span class="string">description</span>: <span class="string">"Counts words and characters"</span>
+)`
+            },
+            nodejs: {
+                icon: '💚',
+                name: 'Node.js Script Tool',
+                code: `<span class="comment">// Register a Node.js JSON formatter</span>
+<span class="function">register_script</span>(
+  <span class="string">name</span>: <span class="string">"json_format"</span>,
+  <span class="string">interpreter</span>: <span class="string">"node"</span>,
+  <span class="string">code</span>: <span class="string">\`const readline = require('readline');
+const rl = readline.createInterface({input: process.stdin});
+
+rl.on('line', (line) => {
+    const req = JSON.parse(line);
+    const data = req.params.arguments.data || {};
+    const result = JSON.stringify(data, null, 2);
+    console.log(JSON.stringify({jsonrpc: '2.0', result: {formatted: result}, id: req.id}));
+    process.exit(0);
+});\`</span>,
+  <span class="string">description</span>: <span class="string">"Formats JSON with indentation"</span>
+)`
+            }
+        };
+
+        document.querySelectorAll('.code-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.code-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                
+                const lang = tab.dataset.lang;
+                const example = codeExamples[lang];
+                
+                document.getElementById('lang-icon').textContent = example.icon;
+                document.getElementById('lang-name').textContent = example.name;
+                document.getElementById('code-example').innerHTML = `<code>${example.code}</code>`;
+            });
+        });
+    </script>
+</body>
+</html>
