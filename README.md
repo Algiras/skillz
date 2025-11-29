@@ -77,26 +77,14 @@ No deployments. No restarts. Just ask.
 </div>
 
 ```bash
-# 🚀 One-line install (Linux & macOS)
-curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh
-
-# 🎯 Install specific version
-curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh -s -- v0.4.0
-
-# Or install from crates.io
+# Install from crates.io (requires Rust)
 cargo install skillz
 
-# Install WASM target (required for building tools)
+# Install WASM target (for building Rust tools)
 rustup target add wasm32-wasip1
 ```
 
-**Or build from source:**
-
-```bash
-git clone https://github.com/Algiras/skillz.git
-cd skillz/mcp-wasm-host
-cargo install --path .
-```
+> **Note**: Script tools (Python, Node.js, etc.) work without the WASM target.
 
 ---
 
