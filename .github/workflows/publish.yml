@@ -93,7 +93,7 @@ jobs:
 
     - name: Generate changelog
       id: changelog
-      if: steps.check_tag.outputs.tag_exists == 'false' && steps.check_version.outputs.should_publish == 'true'
+      if: steps.check_tag.outputs.tag_exists == 'false'
       run: |
         VERSION="${{ steps.local_version.outputs.version }}"
         
@@ -159,7 +159,7 @@ jobs:
         echo "Generated changelog"
 
     - name: Create Git Tag
-      if: steps.check_tag.outputs.tag_exists == 'false' && steps.check_version.outputs.should_publish == 'true'
+      if: steps.check_tag.outputs.tag_exists == 'false'
       run: |
         TAG="v${{ steps.local_version.outputs.version }}"
         git config user.name "github-actions[bot]"
@@ -169,7 +169,7 @@ jobs:
         echo "Created and pushed tag $TAG"
 
     - name: Create GitHub Release
-      if: steps.check_tag.outputs.tag_exists == 'false' && steps.check_version.outputs.should_publish == 'true'
+      if: steps.check_tag.outputs.tag_exists == 'false'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: v${{ steps.local_version.outputs.version }}
@@ -181,6 +181,19 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Skip publish (version exists)
-      if: steps.check_version.outputs.should_publish == 'false'
-      run: echo "Skipping publish - version ${{ steps.local_version.outputs.version }} already exists on crates.io"
+    - name: Summary
+      run: |
+        echo "## Publish & Release Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** ${{ steps.local_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ steps.check_version.outputs.should_publish }}" = "true" ]; then
+          echo "✅ Published to crates.io" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⏭️ Skipped crates.io (version already exists)" >> $GITHUB_STEP_SUMMARY
+        fi
+        if [ "${{ steps.check_tag.outputs.tag_exists }}" = "false" ]; then
+          echo "✅ Created tag v${{ steps.local_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Created GitHub release" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⏭️ Skipped tag/release (already exists)" >> $GITHUB_STEP_SUMMARY
+        fi
