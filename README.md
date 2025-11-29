@@ -80,6 +80,12 @@ No deployments. No restarts. Just ask.
 # 🚀 One-line install (Linux & macOS)
 curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh
 
+# 🎯 Install specific version
+curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh -s -- v0.4.0
+
+# ⚡ Run without installing (npx-style)
+curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh -s -- latest run
+
 # Or install from crates.io
 cargo install skillz
 
@@ -142,6 +148,21 @@ Add to `~/.cursor/mcp.json`:
 ```
 
 > **Note**: If `skillz` isn't in your PATH, use: `~/.cargo/bin/skillz`
+
+### Zero-Install Mode (Run on Demand)
+
+You can run Skillz without installing it, similar to `npx`:
+
+```json
+{
+  "mcpServers": {
+    "skillz": {
+      "command": "sh",
+      "args": ["-c", "curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh -s -- latest run"]
+    }
+  }
+}
+```
 
 ### HTTP Server Mode *(v0.4.0+)*
 
