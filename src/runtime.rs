@@ -459,6 +459,7 @@ impl ToolRuntime {
     }
 
     /// Execute a tool based on its type
+    /// Note: Pipeline tools must be executed via call_pipeline, not call_tool
     pub fn call_tool(&self, config: &ToolConfig, args: Value) -> Result<Value> {
         match config.tool_type() {
             ToolType::Wasm => self.call_wasm_tool(&config.wasm_path, args),
@@ -474,7 +475,36 @@ impl ToolRuntime {
                     Ok(Value::Object(output))
                 }
             }
+            ToolType::Pipeline => {
+                anyhow::bail!("Pipeline tools must be executed via call_pipeline")
+            }
         }
+    }
+
+    /// Execute a tool by name (for pipelines)
+    /// Returns the result as a JSON Value to preserve structure for pipeline variable resolution
+    pub async fn call_tool_by_name(
+        &self,
+        tool_name: &str,
+        args: Option<Value>,
+        registry: &crate::registry::ToolRegistry,
+    ) -> Result<Value> {
+        let config = registry
+            .get_tool(tool_name)
+            .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found", tool_name))?;
+
+        let args_value = args.unwrap_or(Value::Object(serde_json::Map::new()));
+        
+        // Use spawn_blocking because call_tool is sync and may block
+        let runtime = self.clone();
+        let config_clone = config.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            runtime.call_tool(&config_clone, args_value)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
+
+        Ok(result)
     }
 
     /// Execute a WASM tool
@@ -514,12 +544,21 @@ impl ToolRuntime {
         // Save roots for sandbox (before context is moved)
         let sandbox_roots = context.roots.clone();
 
+        // Ensure arguments is an object, not a string
+        // (MCP sometimes passes args as stringified JSON)
+        let arguments = match &args {
+            Value::String(s) => {
+                serde_json::from_str(s).unwrap_or(args.clone())
+            }
+            _ => args,
+        };
+
         // Build the JSON-RPC request with context
         let request = JsonRpcRequest {
             jsonrpc: "2.0",
             method: "execute".to_string(),
             params: ExecuteParams {
-                arguments: args,
+                arguments,
                 context,
             },
             id: 1,

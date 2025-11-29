@@ -1,4 +1,6 @@
 mod builder;
+mod importer;
+mod pipeline;
 mod registry;
 mod runtime;
 
@@ -157,6 +159,65 @@ struct ExecuteCodeArgs {
     tools: Option<Vec<String>>,
     /// Timeout in seconds (default: 30)
     timeout: Option<u64>,
+}
+
+/// Import a tool from an external source
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ImportToolArgs {
+    /// Source to import from. Supported formats:
+    /// - Git: "https://github.com/user/repo" or "https://github.com/user/repo#branch"
+    /// - Gist: "gist:GIST_ID" or "https://gist.github.com/user/GIST_ID"
+    source: String,
+    /// Allow overwriting if tool already exists
+    overwrite: Option<bool>,
+}
+
+/// A step in a pipeline
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct PipelineStepArg {
+    /// Optional name for referencing this step's output (e.g., "fetch_data")
+    name: Option<String>,
+    /// Tool to execute
+    tool: String,
+    /// Arguments to pass. Use $input.field, $prev.field, or $step_name.field for dynamic values
+    args: Option<serde_json::Value>,
+    /// Continue pipeline even if this step fails (default: false)
+    continue_on_error: Option<bool>,
+    /// Condition to check before running (e.g., "$prev.success == true")
+    condition: Option<String>,
+}
+
+/// Create a reusable pipeline
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct CreatePipelineArgs {
+    /// Pipeline name (used to run it later)
+    name: String,
+    /// Description of what the pipeline does
+    description: Option<String>,
+    /// Steps to execute in order
+    steps: Vec<PipelineStepArg>,
+    /// Tags for organization
+    tags: Option<Vec<String>>,
+}
+
+/// Run a saved pipeline
+/// List all pipelines
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ListPipelinesArgs {
+    /// Filter by tag
+    tag: Option<String>,
+}
+
+/// Delete a pipeline
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct DeletePipelineArgs {
+    /// Name of the pipeline to delete
+    name: String,
 }
 
 impl AppState {
@@ -396,6 +457,12 @@ impl AppState {
         };
 
         let tool_args = args.arguments.unwrap_or(serde_json::json!({}));
+
+        // Handle pipeline tools specially
+        if *tool.tool_type() == ToolType::Pipeline {
+            return self.execute_pipeline(&tool, tool_args).await;
+        }
+
         let tool_config = tool.clone();
         let runtime = self.runtime.clone();
 
@@ -406,6 +473,156 @@ impl AppState {
             Ok(Err(e)) => format!("Error executing tool: {}", e),
             Err(e) => format!("Task join error: {}", e),
         }
+    }
+
+    /// Execute a pipeline tool
+    async fn execute_pipeline(&self, tool: &registry::ToolConfig, input: serde_json::Value) -> String {
+        let start_time = std::time::Instant::now();
+        let steps = tool.pipeline_steps();
+
+        let mut step_results: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+        let mut prev_output: Option<serde_json::Value> = None;
+        let mut results: Vec<pipeline::StepResult> = Vec::new();
+        let mut pipeline_success = true;
+
+        for (i, step) in steps.iter().enumerate() {
+            let step_start = std::time::Instant::now();
+
+            // Check condition
+            if let Some(ref condition) = step.condition {
+                match pipeline::PipelineExecutor::evaluate_condition(condition, &input, &step_results, prev_output.as_ref()) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        results.push(pipeline::StepResult {
+                            step_index: i,
+                            step_name: step.name.clone(),
+                            tool: step.tool.clone(),
+                            success: true,
+                            output: serde_json::json!({"skipped": true, "reason": "condition not met"}),
+                            error: None,
+                            duration_ms: 0,
+                        });
+                        continue;
+                    }
+                    Err(e) => {
+                        results.push(pipeline::StepResult {
+                            step_index: i,
+                            step_name: step.name.clone(),
+                            tool: step.tool.clone(),
+                            success: false,
+                            output: serde_json::json!(null),
+                            error: Some(format!("Condition evaluation failed: {}", e)),
+                            duration_ms: step_start.elapsed().as_millis() as u64,
+                        });
+                        if !step.continue_on_error {
+                            pipeline_success = false;
+                            break;
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            // Resolve arguments
+            let resolved_args = match pipeline::PipelineExecutor::resolve_args(&step.args, &input, &step_results, prev_output.as_ref()) {
+                Ok(args) => args,
+                Err(e) => {
+                    results.push(pipeline::StepResult {
+                        step_index: i,
+                        step_name: step.name.clone(),
+                        tool: step.tool.clone(),
+                        success: false,
+                        output: serde_json::json!(null),
+                        error: Some(format!("Failed to resolve arguments: {}", e)),
+                        duration_ms: step_start.elapsed().as_millis() as u64,
+                    });
+                    if !step.continue_on_error {
+                        pipeline_success = false;
+                        break;
+                    }
+                    continue;
+                }
+            };
+
+            // Execute the step's tool
+            let result = self.runtime.call_tool_by_name(&step.tool, Some(resolved_args), &self.registry).await;
+            let duration_ms = step_start.elapsed().as_millis() as u64;
+
+            let (success, output, error) = match result {
+                Ok(output_value) => {
+                    // Result is already a Value, no parsing needed
+                    (true, output_value, None)
+                }
+                Err(e) => {
+                    (false, serde_json::json!(null), Some(e.to_string()))
+                }
+            };
+
+            let step_result = pipeline::StepResult {
+                step_index: i,
+                step_name: step.name.clone(),
+                tool: step.tool.clone(),
+                success,
+                output: output.clone(),
+                error,
+                duration_ms,
+            };
+
+            if let Some(ref name) = step.name {
+                step_results.insert(name.clone(), output.clone());
+            }
+            prev_output = Some(output);
+
+            let step_failed = !step_result.success;
+            results.push(step_result);
+
+            if step_failed && !step.continue_on_error {
+                pipeline_success = false;
+                break;
+            }
+        }
+
+        let total_duration_ms = start_time.elapsed().as_millis() as u64;
+
+        // Format result
+        let mut output = format!(
+            "## {} Pipeline '{}' {}\n\n**Duration:** {}ms\n\n### Steps:\n\n",
+            if pipeline_success { "✅" } else { "❌" },
+            tool.name(),
+            if pipeline_success { "Completed" } else { "Failed" },
+            total_duration_ms
+        );
+
+        for result in &results {
+            let status = if result.success { "✅" } else { "❌" };
+            let default_name = format!("step_{}", result.step_index + 1);
+            let name = result.step_name.as_deref().unwrap_or(&default_name);
+            output.push_str(&format!(
+                "**{} {}** ({}) - {}ms\n",
+                status, name, result.tool, result.duration_ms
+            ));
+
+            if let Some(ref err) = result.error {
+                output.push_str(&format!("  Error: {}\n", err));
+            } else {
+                let output_str = serde_json::to_string_pretty(&result.output).unwrap_or_default();
+                if output_str.len() > 200 {
+                    output.push_str(&format!("  Output: {}...\n", &output_str[..200]));
+                } else {
+                    output.push_str(&format!("  Output: {}\n", output_str));
+                }
+            }
+            output.push('\n');
+        }
+
+        if let Some(last) = results.last() {
+            output.push_str(&format!(
+                "### Final Result:\n```json\n{}\n```",
+                serde_json::to_string_pretty(&last.output).unwrap_or_default()
+            ));
+        }
+
+        output
     }
 
     // ==================== TOOL LISTING ====================
@@ -885,6 +1102,190 @@ CRITICAL for Python scripts: Use sys.stdin.readline() NOT sys.stdin.read()! read
             Err(e) => format!("❌ Failed to execute: {}", e),
         }
     }
+
+    // ==================== TOOL IMPORT ====================
+
+    #[tool(
+        description = "Import a tool from an external source (git repository or GitHub gist). Supports: git URLs (https://github.com/user/repo), branch specifiers (url#branch), and gists (gist:ID or https://gist.github.com/user/ID)."
+    )]
+    async fn import_tool(&self, Parameters(args): Parameters<ImportToolArgs>) -> String {
+        eprintln!("Importing tool from: {}", args.source);
+
+        let importer = importer::Importer::new(self.registry.storage_dir().to_path_buf());
+
+        match importer.import(&args.source, &self.registry, args.overwrite.unwrap_or(false)) {
+            Ok(result) => {
+                // Reload registry to pick up the new tool immediately
+                self.registry.reload();
+                
+                format!(
+                    "✅ **Tool Imported Successfully**\n\n\
+                    - **Name:** {}\n\
+                    - **Type:** {:?}\n\
+                    - **Source:** {}\n\n\
+                    {}\n\n\
+                    🎉 Tool is ready to use! Call it with `call_tool(tool_name: \"{}\")`",
+                    result.tool_name,
+                    result.tool_type,
+                    result.source,
+                    result.message,
+                    result.tool_name
+                )
+            }
+            Err(e) => {
+                format!(
+                    "❌ **Import Failed**\n\n\
+                    **Source:** {}\n\
+                    **Error:** {}\n\n\
+                    **Supported formats:**\n\
+                    - Git: `https://github.com/user/repo` or `https://github.com/user/repo#branch`\n\
+                    - Gist: `gist:GIST_ID` or `https://gist.github.com/user/GIST_ID`",
+                    args.source,
+                    e
+                )
+            }
+        }
+    }
+
+    // ==================== PIPELINES ====================
+
+    #[tool(
+        description = r#"Create a reusable pipeline that chains tools together. Steps run in order, with outputs available to subsequent steps.
+
+Variable syntax:
+- $input.field - Access pipeline input
+- $prev - Previous step's entire output
+- $prev.field - Access field from previous step
+- $step_name.field - Access field from a named step
+
+Example:
+create_pipeline(
+  name: "analyze_and_report",
+  steps: [
+    { name: "fetch", tool: "http_get", args: { url: "$input.url" } },
+    { tool: "analyze_text", args: { text: "$fetch.body" } },
+    { tool: "format_report", args: { data: "$prev" } }
+  ]
+)"#
+    )]
+    async fn create_pipeline(&self, Parameters(args): Parameters<CreatePipelineArgs>) -> String {
+        eprintln!("Creating pipeline: {}", args.name);
+
+        // Check if tool already exists
+        if self.registry.get_tool(&args.name).is_some() {
+            return format!(
+                "❌ A tool named '{}' already exists. Choose a different name.",
+                args.name
+            );
+        }
+
+        // Validate steps reference existing tools
+        for (i, step) in args.steps.iter().enumerate() {
+            if self.registry.get_tool(&step.tool).is_none() {
+                // Check if it's a built-in tool
+                let built_in_tools = [
+                    "build_tool", "register_script", "create_skill", "import_tool",
+                    "call_tool", "list_tools", "complete", "execute_code",
+                    "install_deps", "delete_tool", "test_validate",
+                    "create_pipeline", "list_pipelines", "delete_pipeline"
+                ];
+                if !built_in_tools.contains(&step.tool.as_str()) {
+                    return format!(
+                        "❌ Step {} references unknown tool '{}'. Create or import it first.",
+                        i + 1,
+                        step.tool
+                    );
+                }
+            }
+        }
+
+        // Convert to registry PipelineStep
+        let steps: Vec<registry::PipelineStep> = args
+            .steps
+            .into_iter()
+            .map(|s| registry::PipelineStep {
+                name: s.name,
+                tool: s.tool,
+                args: s.args.unwrap_or(serde_json::json!({})),
+                continue_on_error: s.continue_on_error.unwrap_or(false),
+                condition: s.condition,
+            })
+            .collect();
+
+        // Create pipeline manifest
+        let mut manifest = registry::ToolManifest::new_pipeline(
+            args.name.clone(),
+            args.description.unwrap_or_default(),
+            steps,
+        );
+        manifest.tags = args.tags.unwrap_or_default();
+
+        match self.registry.register_tool(manifest, &[]) {
+            Ok(_) => {
+                format!(
+                    "✅ **Pipeline '{}' Created**\n\n\
+                    Pipelines are tools! Use:\n\
+                    - `call_tool(tool_name: \"{}\", arguments: {{...}})` to run it\n\
+                    - `list_tools` to see all tools including pipelines\n\
+                    - `delete_tool` to remove it",
+                    args.name, args.name
+                )
+            }
+            Err(e) => format!("❌ Failed to create pipeline: {}", e),
+        }
+    }
+
+    #[tool(description = "List all pipeline tools. Optionally filter by tag.")]
+    async fn list_pipelines(&self, Parameters(args): Parameters<ListPipelinesArgs>) -> String {
+        let all_tools = self.registry.list_tools();
+        let pipelines: Vec<_> = all_tools
+            .iter()
+            .filter(|t| *t.tool_type() == ToolType::Pipeline)
+            .collect();
+
+        let filtered: Vec<_> = if let Some(ref tag) = args.tag {
+            pipelines
+                .into_iter()
+                .filter(|p| p.manifest.tags.contains(tag))
+                .collect()
+        } else {
+            pipelines
+        };
+
+        if filtered.is_empty() {
+            return "📭 No pipelines found. Create one with `create_pipeline`.".to_string();
+        }
+
+        let mut output = format!("## 📋 Pipelines ({})\n\n", filtered.len());
+
+        for p in filtered {
+            output.push_str(&format!(
+                "### {}\n- **Description:** {}\n- **Steps:** {}\n- **Tags:** {}\n\n",
+                p.name(),
+                if p.description().is_empty() { "(none)" } else { p.description() },
+                p.pipeline_steps().len(),
+                if p.manifest.tags.is_empty() { "(none)".to_string() } else { p.manifest.tags.join(", ") }
+            ));
+        }
+
+        output
+    }
+
+    #[tool(description = "Delete a pipeline (same as delete_tool)")]
+    async fn delete_pipeline(&self, Parameters(args): Parameters<DeletePipelineArgs>) -> String {
+        // Verify it's actually a pipeline
+        if let Some(tool) = self.registry.get_tool(&args.name) {
+            if *tool.tool_type() != ToolType::Pipeline {
+                return format!("⚠️ '{}' is not a pipeline. Use delete_tool instead.", args.name);
+            }
+        }
+
+        match self.registry.delete_tool(&args.name) {
+            Ok(true) => format!("🗑️ Pipeline '{}' deleted successfully", args.name),
+            Ok(false) => format!("⚠️ Pipeline '{}' not found", args.name),
+            Err(e) => format!("❌ Failed to delete pipeline: {}", e),
+        }
+    }
 }
 
 impl AppState {
@@ -1033,6 +1434,7 @@ impl ServerHandler for AppState {
             let type_emoji = match tool.tool_type() {
                 ToolType::Wasm => "🦀",
                 ToolType::Script => "📜",
+                ToolType::Pipeline => "⛓️",
             };
             resources.push(
                 RawResource::new(
@@ -1580,6 +1982,15 @@ request = json.loads(sys.stdin.read())
                             ),
                         )
                     }
+                    ToolType::Pipeline => (
+                        "Pipeline",
+                        "⛓️",
+                        format!(
+                            "Directory: {}\nSteps: {}",
+                            tool.tool_dir.display(),
+                            tool.pipeline_steps().len()
+                        ),
+                    ),
                 };
                 let version_info = format!("- **Version:** {}\n", tool.manifest.version);
                 format!(
@@ -1616,7 +2027,7 @@ async fn main() -> Result<()> {
 
     let state = AppState::new(registry, runtime);
 
-    eprintln!("Skillz MCP started (WASM + Script tools)");
+    eprintln!("Skillz MCP started (WASM + Script + Pipeline tools)");
 
     state.serve(stdio()).await?.waiting().await?;
 

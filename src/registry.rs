@@ -14,6 +14,8 @@ pub enum ToolType {
     Wasm,
     /// External script/executable with JSON-RPC 2.0 interface
     Script,
+    /// Pipeline - chains other tools together
+    Pipeline,
 }
 
 /// Tool annotations - hints about tool behavior for clients
@@ -90,6 +92,25 @@ impl ToolSchema {
     }
 }
 
+/// A step in a pipeline tool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineStep {
+    /// Optional name for referencing this step's output
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Tool to execute (can be another pipeline!)
+    pub tool: String,
+    /// Arguments - use $input.field, $prev, $prev.field, $step_name.field
+    #[serde(default)]
+    pub args: serde_json::Value,
+    /// Continue even if this step fails
+    #[serde(default)]
+    pub continue_on_error: bool,
+    /// Condition to check before running (e.g., "$prev.success == true")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
+}
+
 /// Tool manifest - stored as manifest.json in each tool's directory
 /// This is the shareable format that people can copy between installations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,9 +122,12 @@ pub struct ToolManifest {
     pub version: String,
     /// What the tool does
     pub description: String,
-    /// Tool type: wasm or script
+    /// Tool type: wasm, script, or pipeline
     #[serde(default)]
     pub tool_type: ToolType,
+    /// For script tools: the script filename to execute (e.g., "main.py")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_file: Option<String>,
     /// For script tools: interpreter command (python3, node, ruby, bash)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interpreter: Option<String>,
@@ -122,6 +146,9 @@ pub struct ToolManifest {
     /// WASM/Rust dependencies (crates) - format: "name@version" or "name@version[feat1,feat2]"
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub wasm_dependencies: Vec<String>,
+    /// For pipeline tools: the steps to execute
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pipeline_steps: Vec<PipelineStep>,
     /// Tool author (optional, for sharing)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
@@ -154,12 +181,14 @@ impl ToolManifest {
             version: "1.0.0".to_string(),
             description,
             tool_type,
+            entry_file: None,
             interpreter: None,
             input_schema: ToolSchema::any(),
             output_schema: None,
             annotations: None,
             dependencies: vec![],
             wasm_dependencies: vec![],
+            pipeline_steps: vec![],
             author: None,
             license: None,
             repository: None,
@@ -167,6 +196,13 @@ impl ToolManifest {
             created_at: Some(now.clone()),
             updated_at: Some(now),
         }
+    }
+
+    /// Create a new pipeline manifest
+    pub fn new_pipeline(name: String, description: String, steps: Vec<PipelineStep>) -> Self {
+        let mut manifest = Self::new(name, description, ToolType::Pipeline);
+        manifest.pipeline_steps = steps;
+        manifest
     }
 }
 
@@ -216,6 +252,9 @@ impl ToolConfig {
     pub fn annotations(&self) -> Option<&ToolAnnotations> {
         self.manifest.annotations.as_ref()
     }
+    pub fn pipeline_steps(&self) -> &[PipelineStep] {
+        &self.manifest.pipeline_steps
+    }
 }
 
 /// Get current timestamp in ISO 8601 format
@@ -259,6 +298,11 @@ impl ToolRegistry {
         registry.migrate_old_format();
 
         registry
+    }
+
+    /// Load/reload all tools from the directory structure
+    pub fn reload(&self) {
+        self.load_all_tools();
     }
 
     /// Load all tools from the directory structure
@@ -306,18 +350,27 @@ impl ToolRegistry {
                 (wasm, PathBuf::new())
             }
             ToolType::Script => {
-                // Find script file with appropriate extension
-                let ext = match manifest.interpreter.as_deref() {
-                    Some("python3") | Some("python") => "py",
-                    Some("node") | Some("nodejs") => "js",
-                    Some("ruby") => "rb",
-                    Some("bash") | Some("sh") => "sh",
-                    Some("perl") => "pl",
-                    Some("php") => "php",
-                    _ => "script",
+                // Use entry_file if specified, otherwise infer from interpreter
+                let script = if let Some(ref entry) = manifest.entry_file {
+                    tool_dir.join(entry)
+                } else {
+                    // Fallback: infer from interpreter
+                    let ext = match manifest.interpreter.as_deref() {
+                        Some("python3") | Some("python") => "py",
+                        Some("node") | Some("nodejs") => "js",
+                        Some("ruby") => "rb",
+                        Some("bash") | Some("sh") => "sh",
+                        Some("perl") => "pl",
+                        Some("php") => "php",
+                        _ => "script",
+                    };
+                    tool_dir.join(format!("{}.{}", tool_name, ext))
                 };
-                let script = tool_dir.join(format!("{}.{}", tool_name, ext));
                 (PathBuf::new(), script)
+            }
+            ToolType::Pipeline => {
+                // Pipelines don't have WASM or script files
+                (PathBuf::new(), PathBuf::new())
             }
         };
 
@@ -397,6 +450,7 @@ impl ToolRegistry {
                 version: "1.0.0".to_string(),
                 description: old.description,
                 tool_type: old.tool_type.clone(),
+                entry_file: None, // Will be set during migration
                 interpreter: old.interpreter.clone(),
                 input_schema: old
                     .input_schema
@@ -406,6 +460,7 @@ impl ToolRegistry {
                 annotations: old.annotations.map(ToolAnnotations::from_value),
                 dependencies: old.dependencies,
                 wasm_dependencies: vec![],
+                pipeline_steps: vec![],
                 author: None,
                 license: None,
                 repository: None,
@@ -437,6 +492,9 @@ impl ToolRegistry {
                         let _ = fs::rename(&old.script_path, &new_path);
                     }
                 }
+                ToolType::Pipeline => {
+                    // Pipelines don't have files to migrate
+                }
             }
 
             migrated += 1;
@@ -463,6 +521,7 @@ impl ToolRegistry {
         match manifest.tool_type {
             ToolType::Wasm => self.register_wasm_tool(manifest, code, ""),
             ToolType::Script => self.register_script_tool(manifest, code),
+            ToolType::Pipeline => self.register_pipeline_tool(manifest),
         }
     }
 
@@ -510,21 +569,35 @@ impl ToolRegistry {
         let tool_dir = self.storage_dir.join(&manifest.name);
         fs::create_dir_all(&tool_dir)?;
 
+        // Determine script filename
+        let script_filename = if let Some(ref entry) = manifest.entry_file {
+            entry.clone()
+        } else {
+            // Generate filename from interpreter
+            let ext = match manifest.interpreter.as_deref() {
+                Some("python3") | Some("python") => "py",
+                Some("node") | Some("nodejs") => "js",
+                Some("ruby") => "rb",
+                Some("bash") | Some("sh") => "sh",
+                Some("perl") => "pl",
+                Some("php") => "php",
+                _ => "script",
+            };
+            format!("{}.{}", manifest.name, ext)
+        };
+
+        // Update manifest with entry_file if not set
+        let mut manifest = manifest;
+        if manifest.entry_file.is_none() {
+            manifest.entry_file = Some(script_filename.clone());
+        }
+
         // Save manifest
         let manifest_json = serde_json::to_string_pretty(&manifest)?;
         fs::write(tool_dir.join("manifest.json"), manifest_json)?;
 
         // Save script file
-        let ext = match manifest.interpreter.as_deref() {
-            Some("python3") | Some("python") => "py",
-            Some("node") | Some("nodejs") => "js",
-            Some("ruby") => "rb",
-            Some("bash") | Some("sh") => "sh",
-            Some("perl") => "pl",
-            Some("php") => "php",
-            _ => "script",
-        };
-        let script_path = tool_dir.join(format!("{}.{}", manifest.name, ext));
+        let script_path = tool_dir.join(&script_filename);
         fs::write(&script_path, code)?;
 
         // Make executable on Unix
@@ -543,6 +616,31 @@ impl ToolRegistry {
             script_path,
             env_path: None,
             deps_installed: false,
+        };
+
+        // Update in-memory cache
+        let mut tools = self.tools.write().unwrap();
+        tools.insert(config.manifest.name.clone(), config.clone());
+
+        Ok(config)
+    }
+
+    /// Register a pipeline tool (no code, just manifest with steps)
+    fn register_pipeline_tool(&self, manifest: ToolManifest) -> Result<ToolConfig> {
+        let tool_dir = self.storage_dir.join(&manifest.name);
+        fs::create_dir_all(&tool_dir)?;
+
+        // Save manifest
+        let manifest_json = serde_json::to_string_pretty(&manifest)?;
+        fs::write(tool_dir.join("manifest.json"), manifest_json)?;
+
+        let config = ToolConfig {
+            manifest,
+            tool_dir,
+            wasm_path: PathBuf::new(),
+            script_path: PathBuf::new(),
+            env_path: None,
+            deps_installed: true, // Pipelines don't need dependency installation
         };
 
         // Update in-memory cache

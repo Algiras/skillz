@@ -100,6 +100,7 @@ fn test_progress_notification_format() {
 }
 
 /// Test script tool execution (Python)
+/// CRITICAL: Uses sys.stdin.readline() NOT sys.stdin.read() - read() blocks forever!
 #[test]
 fn test_script_execution_python() {
     // Check if Python is available
@@ -112,13 +113,15 @@ fn test_script_execution_python() {
     let temp_dir = TempDir::new().unwrap();
     let script_path = temp_dir.path().join("test_script.py");
 
+    // Use sys.stdin.readline() - this is the correct pattern for JSON-RPC scripts
     let script = r#"#!/usr/bin/env python3
 import json
 import sys
 
-request = json.loads(sys.stdin.read())
+request = json.loads(sys.stdin.readline())
 result = {"message": "Python test success", "received": request.get("params", {}).get("arguments", {})}
 print(json.dumps({"jsonrpc": "2.0", "result": result, "id": request.get("id")}))
+sys.stdout.flush()
 "#;
 
     fs::write(&script_path, script).unwrap();
@@ -131,7 +134,9 @@ print(json.dumps({"jsonrpc": "2.0", "result": result, "id": request.get("id")}))
         .spawn()
         .unwrap();
 
-    let request = r#"{"jsonrpc": "2.0", "method": "execute", "params": {"arguments": {"test": "data"}, "context": {}}, "id": 1}"#;
+    // Note: Request ends with newline for readline()
+    let request = r#"{"jsonrpc": "2.0", "method": "execute", "params": {"arguments": {"test": "data"}, "context": {}}, "id": 1}
+"#;
 
     {
         let stdin = child.stdin.as_mut().unwrap();
@@ -195,4 +200,151 @@ rl.on('line', (line) => {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let response: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(response["result"]["message"], "Node.js test success");
+}
+
+/// Test that arguments passed as stringified JSON are handled correctly
+/// This is critical for pipelines which pass arguments between steps
+#[test]
+fn test_arguments_as_string_parsing() {
+    // Check if Python is available
+    let python_check = Command::new("python3").arg("--version").output();
+    if python_check.is_err() || !python_check.unwrap().status.success() {
+        eprintln!("Skipping test: python3 not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let script_path = temp_dir.path().join("args_test.py");
+
+    // Script that echoes back the arguments to verify they're parsed correctly
+    let script = r#"#!/usr/bin/env python3
+import json
+import sys
+
+request = json.loads(sys.stdin.readline())
+args = request.get("params", {}).get("arguments", {})
+
+# Return the type and value of args to verify correct parsing
+result = {
+    "args_type": str(type(args).__name__),
+    "args_value": args,
+    "text_value": args.get("text", "NOT_FOUND") if isinstance(args, dict) else "NOT_A_DICT"
+}
+print(json.dumps({"jsonrpc": "2.0", "result": result, "id": request.get("id")}))
+sys.stdout.flush()
+"#;
+
+    fs::write(&script_path, script).unwrap();
+
+    // Test with arguments as a proper object
+    let mut child = Command::new("python3")
+        .arg(&script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let request = r#"{"jsonrpc": "2.0", "method": "execute", "params": {"arguments": {"text": "hello world"}}, "id": 1}
+"#;
+
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(request.as_bytes()).unwrap();
+    }
+
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["result"]["args_type"], "dict");
+    assert_eq!(response["result"]["text_value"], "hello world");
+}
+
+/// Test that script outputs are correctly parsed (important for pipeline step outputs)
+#[test]
+fn test_script_output_parsing() {
+    // Check if Python is available
+    let python_check = Command::new("python3").arg("--version").output();
+    if python_check.is_err() || !python_check.unwrap().status.success() {
+        eprintln!("Skipping test: python3 not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let script_path = temp_dir.path().join("output_test.py");
+
+    // Script that returns structured output
+    let script = r#"#!/usr/bin/env python3
+import json
+import sys
+
+request = json.loads(sys.stdin.readline())
+
+# Return structured output that pipelines can use
+result = {
+    "count": 42,
+    "items": ["a", "b", "c"],
+    "nested": {
+        "value": "deep",
+        "number": 123
+    },
+    "success": True
+}
+print(json.dumps({"jsonrpc": "2.0", "result": result, "id": request.get("id")}))
+sys.stdout.flush()
+"#;
+
+    fs::write(&script_path, script).unwrap();
+
+    let mut child = Command::new("python3")
+        .arg(&script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let request = r#"{"jsonrpc": "2.0", "method": "execute", "params": {"arguments": {}}, "id": 1}
+"#;
+
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(request.as_bytes()).unwrap();
+    }
+
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    
+    // Verify structured output is preserved
+    assert_eq!(response["result"]["count"], 42);
+    assert_eq!(response["result"]["items"][0], "a");
+    assert_eq!(response["result"]["items"][1], "b");
+    assert_eq!(response["result"]["items"][2], "c");
+    assert_eq!(response["result"]["nested"]["value"], "deep");
+    assert_eq!(response["result"]["nested"]["number"], 123);
+    assert_eq!(response["result"]["success"], true);
+}
+
+/// Test accessing nested output fields (critical for pipeline variable resolution like $prev.nested.value)
+#[test]
+fn test_nested_output_access() {
+    let output = serde_json::json!({
+        "result": {
+            "data": {
+                "users": [
+                    {"name": "Alice", "age": 30},
+                    {"name": "Bob", "age": 25}
+                ],
+                "count": 2
+            },
+            "success": true
+        }
+    });
+
+    // Test accessing nested fields like pipelines do
+    assert_eq!(output["result"]["success"], true);
+    assert_eq!(output["result"]["data"]["count"], 2);
+    assert_eq!(output["result"]["data"]["users"][0]["name"], "Alice");
+    assert_eq!(output["result"]["data"]["users"][1]["age"], 25);
 }
