@@ -181,6 +181,7 @@ impl Memory {
     }
 
     /// Get all entries for a tool
+    #[allow(dead_code)]
     pub async fn get_all(&self, tool: &str) -> Result<Vec<(String, Value)>> {
         let conn = self.conn.read().await;
         let mut rows = conn
@@ -223,6 +224,7 @@ impl Memory {
     }
 
     /// Clear all memory (all tools)
+    #[allow(dead_code)]
     pub async fn clear_all(&self) -> Result<u64> {
         let conn = self.conn.write().await;
         let rows = conn.execute("DELETE FROM memories", ()).await?;

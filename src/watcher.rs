@@ -11,6 +11,7 @@ use notify_debouncer_mini::{new_debouncer, notify::RecursiveMode, DebouncedEvent
 
 /// Events emitted by the file watcher
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum WatchEvent {
     /// A tool was modified (manifest.json or script changed)
     ToolModified(String),
@@ -174,12 +175,14 @@ impl HotReload {
     }
     
     /// Try to get the next watch event (non-blocking, returns immediately)
+    #[allow(dead_code)]
     pub fn try_next_event(&mut self) -> Option<WatchEvent> {
         self.event_rx.try_recv().ok()
     }
 }
 
 /// Callback type for tool reload notifications
+#[allow(dead_code)]
 pub type ReloadCallback = Arc<dyn Fn(&str) + Send + Sync>;
 
 #[cfg(test)]

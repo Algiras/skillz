@@ -106,6 +106,7 @@ impl Builder {
     }
 
     /// Compile a WASM tool with optional dependencies
+    #[allow(dead_code)]
     pub fn compile_tool(name: &str, code: &str) -> Result<PathBuf> {
         Self::compile_tool_with_deps(name, code, &[])
     }

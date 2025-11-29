@@ -237,6 +237,7 @@ impl ToolConfig {
     pub fn interpreter(&self) -> Option<&str> {
         self.manifest.interpreter.as_deref()
     }
+    #[allow(dead_code)]
     pub fn dependencies(&self) -> &[String] {
         &self.manifest.dependencies
     }
@@ -244,6 +245,7 @@ impl ToolConfig {
     pub fn wasm_dependencies(&self) -> &[String] {
         &self.manifest.wasm_dependencies
     }
+    #[allow(dead_code)]
     pub fn input_schema(&self) -> &ToolSchema {
         &self.manifest.input_schema
     }
