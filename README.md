@@ -84,6 +84,7 @@ Add to `~/.cursor/mcp.json`:
 | 💾 **Persistence** | Tools survive server restarts |
 | 🔒 **Sandbox** | Optional bubblewrap/firejail/nsjail isolation |
 | 📂 **Shareable** | Each tool has its own directory with manifest.json |
+| 📖 **Dynamic Guide** | Built-in `skillz://guide` resource updates automatically |
 
 ---
 

@@ -169,6 +169,29 @@
             margin-left: 0.5rem;
         }
 
+        .github-glow {
+            position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(16, 185, 129, 0.5);
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+            animation: glow-pulse 3s infinite;
+        }
+
+        @keyframes glow-pulse {
+            0% {
+                box-shadow: 0 0 5px rgba(16, 185, 129, 0.2);
+            }
+
+            50% {
+                box-shadow: 0 0 20px rgba(16, 185, 129, 0.6);
+                border-color: rgba(16, 185, 129, 0.8);
+            }
+
+            100% {
+                box-shadow: 0 0 5px rgba(16, 185, 129, 0.2);
+            }
+        }
+
         h1 {
             font-size: clamp(2.5rem, 6vw, 4.5rem);
             font-weight: 700;
@@ -629,7 +652,7 @@
         <div class="container">
             <div class="hero-badge">
                 🚀 MCP Server for Dynamic Tool Creation
-                <span class="hero-badge version-badge">v0.1.1</span>
+                <span class="hero-badge version-badge github-glow">v0.2.0</span>
             </div>
             <h1>
                 Let Your AI<br>
@@ -705,6 +728,41 @@ cargo install skillz</code></pre>
         </div>
     </section>
 
+    <section class="features" style="padding: 4rem 0; background: var(--bg-secondary);">
+        <div class="container">
+            <div class="section-title" style="margin-bottom: 3rem;">
+                <h2>🔧 Configuration</h2>
+                <p>Environment variables to control behavior</p>
+            </div>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">📂</div>
+                    <h3>SKILLZ_ROOTS</h3>
+                    <p>Colon-separated list of allowed workspace roots.
+                        <br><code
+                            style="font-size: 0.8em; color: var(--accent-secondary);">/home/user/project:/data</code>
+                    </p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>SKILLZ_SANDBOX</h3>
+                    <p>Isolation mode for script tools (Linux only).
+                        <br><code
+                            style="font-size: 0.8em; color: var(--accent-secondary);">bubblewrap | firejail | nsjail</code>
+                    </p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🌐</div>
+                    <h3>SKILLZ_SANDBOX_NETWORK</h3>
+                    <p>Allow network access in sandbox (set to 1).
+                        <br><code
+                            style="font-size: 0.8em; color: var(--accent-secondary);">export SKILLZ_SANDBOX_NETWORK=1</code>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <section class="features" id="features">
         <div class="container">
             <div class="section-title">
@@ -721,7 +779,8 @@ cargo install skillz</code></pre>
                 <div class="feature-card">
                     <div class="feature-icon">📜</div>
                     <h3>Script Tools (Any Language)</h3>
-                    <p>Register tools in Python, Node.js, Ruby, Bash, or any language. Scripts communicate via JSON-RPC
+                    <p>Register tools in Python, Node.js, Ruby, Bash, Perl, PHP, or any language. Scripts communicate
+                        via JSON-RPC
                         2.0 protocol.</p>
                 </div>
                 <div class="feature-card">
