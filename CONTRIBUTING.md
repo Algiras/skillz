@@ -8,14 +8,13 @@ Thank you for your interest in contributing to Skillz! This document provides gu
 
 - **Rust 1.70+** with the `wasm32-wasip1` target
 - **Git** for version control
-- **Python 3** for running tests
 
 ### Setup
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/skillz.git
-cd skillz/mcp-wasm-host
+git clone https://github.com/Algiras/skillz.git
+cd skillz
 
 # Install WASM target
 rustup target add wasm32-wasip1
@@ -24,7 +23,7 @@ rustup target add wasm32-wasip1
 cargo build
 
 # Run tests
-python3 test_e2e.py
+cargo test
 ```
 
 ## 🔧 Development Workflow
@@ -50,16 +49,13 @@ git checkout -b fix/your-bug-fix
 cargo build
 
 # Run all tests
-python3 test_e2e.py
-python3 test_validate.py
-python3 test_persistence.py
-python3 test_workflow.py
+cargo test
 
 # Check formatting
 cargo fmt --check
 
 # Run clippy
-cargo clippy
+cargo clippy --all-targets -- -D warnings
 ```
 
 ### 4. Commit Your Changes
@@ -77,22 +73,22 @@ refactor: refactor code
 ### 5. Submit a Pull Request
 
 - Push your branch to your fork
-- Create a Pull Request against `main`
+- Create a Pull Request against `master`
 - Describe your changes clearly
 - Link any related issues
 
 ## 📁 Project Structure
 
 ```
-mcp-wasm-host/
+skillz/
 ├── src/
 │   ├── main.rs       # MCP server, tools, resources
 │   ├── builder.rs    # Rust → WASM compilation
 │   ├── runtime.rs    # WASM & Script execution
 │   └── registry.rs   # Tool storage & management
+├── tests/            # Integration tests
 ├── docs/             # GitHub Pages documentation
-├── tools/            # Compiled tools directory
-└── tests/            # Test files
+└── .github/          # CI/CD workflows
 ```
 
 ## 🎯 Areas for Contribution
@@ -122,7 +118,8 @@ mcp-wasm-host/
 
 ### Rust
 
-- Use `rustfmt` for formatting
+- Use `rustfmt` for formatting: `cargo fmt`
+- Use `clippy` for linting: `cargo clippy`
 - Follow Rust API guidelines
 - Document public APIs with doc comments
 - Use meaningful variable names
@@ -159,4 +156,3 @@ By contributing, you agree that your contributions will be licensed under the MI
 ## 🙏 Thank You!
 
 Every contribution, no matter how small, makes a difference. Thank you for helping make Skillz better!
-

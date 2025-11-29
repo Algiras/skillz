@@ -503,12 +503,56 @@
                 Skillz is a self-extending MCP server. Create WASM tools from Rust or register scripts in any language—Python, Node.js, Ruby, Bash—at runtime.
             </p>
             <div class="hero-buttons">
-                <a href="#examples" class="btn btn-primary">
-                    Get Started →
+                <a href="#install" class="btn btn-primary">
+                    Install Now →
+                </a>
+                <a href="https://crates.io/crates/skillz" class="btn btn-secondary" target="_blank">
+                    📦 crates.io
                 </a>
                 <a href="https://github.com/Algiras/skillz" class="btn btn-secondary" target="_blank">
-                    View on GitHub
+                    GitHub
                 </a>
+            </div>
+        </div>
+    </section>
+
+    <section class="features" id="install" style="padding: 4rem 0;">
+        <div class="container">
+            <div class="section-title">
+                <h2>⚡ Quick Install</h2>
+                <p>Get started in seconds with cargo</p>
+            </div>
+            <div class="code-block" style="max-width: 700px; margin: 0 auto;">
+                <div class="code-header">
+                    <span class="code-lang">
+                        <span>🦀</span>
+                        <span>Terminal</span>
+                    </span>
+                </div>
+                <div class="code-content">
+                    <pre><code><span class="comment"># Install WASM target</span>
+rustup target add wasm32-wasip1
+
+<span class="comment"># Install Skillz</span>
+cargo install skillz</code></pre>
+                </div>
+            </div>
+            <div style="text-align: center; margin-top: 2rem;">
+                <p style="color: var(--text-secondary); margin-bottom: 1rem;">Then add to your editor's MCP config:</p>
+                <div class="code-block" style="max-width: 500px; margin: 0 auto;">
+                    <div class="code-content">
+                        <pre><code>{
+  "mcpServers": {
+    "skillz": {
+      "command": "skillz"
+    }
+  }
+}</code></pre>
+                    </div>
+                </div>
+                <p style="color: var(--text-muted); margin-top: 1.5rem; font-size: 0.9rem;">
+                    Works with Cursor, Claude Desktop, VS Code, and any MCP client
+                </p>
             </div>
         </div>
     </section>
