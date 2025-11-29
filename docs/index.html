@@ -702,6 +702,62 @@
             transform: translateY(-4px);
             box-shadow: 0 8px 30px var(--accent-glow);
         }
+
+        /* Support Banner */
+        .support-banner {
+            background: linear-gradient(135deg, rgba(255, 221, 87, 0.1), rgba(255, 129, 0, 0.1));
+            border: 2px solid rgba(255, 221, 87, 0.3);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            margin: 2rem 0;
+        }
+
+        .support-banner h3 {
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+            font-size: 1.25rem;
+        }
+
+        .support-banner p {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        .coffee-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            background: linear-gradient(135deg, #FFDD57, #FF8100);
+            color: #1a1a25;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(255, 221, 87, 0.3);
+        }
+
+        .coffee-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 25px rgba(255, 221, 87, 0.5);
+        }
+
+        /* Diagram styles */
+        .diagram-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 2rem;
+            margin: 2rem 0;
+        }
+
+        .diagram-title {
+            text-align: center;
+            font-size: 1.25rem;
+            color: var(--accent-secondary);
+            margin-bottom: 1.5rem;
+        }
     </style>
 </head>
 
@@ -734,7 +790,7 @@
         <div class="container">
             <div class="hero-badge">
                 🚀 MCP Server for Dynamic Tool Creation
-                <span class="hero-badge version-badge github-glow">v0.2.0</span>
+                <span class="hero-badge version-badge github-glow">v0.3.0</span>
             </div>
             <h1>
                 Let Your AI<br>
@@ -753,6 +809,22 @@
                 </a>
                 <a href="https://github.com/Algiras/skillz" class="btn btn-secondary" target="_blank">
                     GitHub
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <section style="padding: 2rem 0; background: var(--bg-secondary);">
+        <div class="container">
+            <div class="support-banner">
+                <h3>☕ Support Skillz Development</h3>
+                <p>Help keep this project growing! Your support enables new features and improvements.</p>
+                <a href="https://buymeacoffee.com/algiras" class="coffee-btn" target="_blank" rel="noopener">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path
+                            d="M20 3H4v10c0 2.21 1.79 4 4 4h6c2.21 0 4-1.79 4-4v-3h2c1.11 0 2-.89 2-2V5c0-1.11-.89-2-2-2zm0 5h-2V5h2v3zM4 19h16v2H4z" />
+                    </svg>
+                    Buy Me a Coffee
                 </a>
             </div>
         </div>
@@ -1051,6 +1123,140 @@ cargo install skillz</code></pre>
             <div class="arch-diagram">
                 <img src="architecture.png" alt="Skillz Architecture Diagram"
                     style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+            </div>
+        </div>
+    </section>
+
+    <section style="padding: 4rem 0; background: var(--bg-secondary);">
+        <div class="container">
+            <div class="section-title">
+                <h2>📊 How Skillz Works</h2>
+                <p>Visual overview of the tool creation and execution flow</p>
+            </div>
+
+            <div class="diagram-container">
+                <h3 class="diagram-title">Tool Types & Execution Flow</h3>
+                <svg viewBox="0 0 800 400" style="width: 100%; max-width: 800px; margin: 0 auto; display: block;">
+                    <!-- Background -->
+                    <defs>
+                        <linearGradient id="rustGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" style="stop-color:#7c3aed;stop-opacity:0.2" />
+                            <stop offset="100%" style="stop-color:#a855f7;stop-opacity:0.2" />
+                        </linearGradient>
+                        <linearGradient id="scriptGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:0.2" />
+                            <stop offset="100%" style="stop-color:#10b981;stop-opacity:0.2" />
+                        </linearGradient>
+                    </defs>
+
+                    <!-- MCP Server (Center) -->
+                    <rect x="300" y="160" width="200" height="80" rx="10" fill="url(#rustGrad)" stroke="#7c3aed"
+                        stroke-width="2" />
+                    <text x="400" y="195" text-anchor="middle" fill="#f8fafc" font-size="16" font-weight="bold">MCP
+                        Server</text>
+                    <text x="400" y="215" text-anchor="middle" fill="#94a3b8" font-size="12">Skillz Runtime</text>
+
+                    <!-- WASM Tools (Top) -->
+                    <rect x="50" y="20" width="180" height="100" rx="10" fill="url(#rustGrad)" stroke="#f97316"
+                        stroke-width="2" />
+                    <text x="140" y="50" text-anchor="middle" fill="#f8fafc" font-size="14" font-weight="bold">🦀 WASM
+                        Tools</text>
+                    <text x="140" y="70" text-anchor="middle" fill="#94a3b8" font-size="11">Rust + Dependencies</text>
+                    <text x="140" y="85" text-anchor="middle" fill="#94a3b8" font-size="11">WebAssembly</text>
+                    <text x="140" y="100" text-anchor="middle" fill="#10b981" font-size="10">✓ Sandboxed</text>
+
+                    <!-- Script Tools (Top Right) -->
+                    <rect x="570" y="20" width="180" height="100" rx="10" fill="url(#scriptGrad)" stroke="#3b82f6"
+                        stroke-width="2" />
+                    <text x="660" y="50" text-anchor="middle" fill="#f8fafc" font-size="14" font-weight="bold">📜 Script
+                        Tools</text>
+                    <text x="660" y="70" text-anchor="middle" fill="#94a3b8" font-size="11">Python, Node.js, etc.</text>
+                    <text x="660" y="85" text-anchor="middle" fill="#94a3b8" font-size="11">JSON-RPC 2.0</text>
+                    <text x="660" y="100" text-anchor="middle" fill="#10b981" font-size="10">✓ Isolated Env</text>
+
+                    <!-- Editor (Bottom) -->
+                    <rect x="300" y="300" width="200" height="60" rx="10" fill="#16161f" stroke="#94a3b8"
+                        stroke-width="2" />
+                    <text x="400" y="335" text-anchor="middle" fill="#f8fafc" font-size="14" font-weight="bold">AI
+                        Editor / Client</text>
+
+                    <!-- Arrows WASM -> Server -->
+                    <path d="M 230 70 L 300 180" stroke="#f97316" stroke-width="2" fill="none"
+                        marker-end="url(#arrowhead)" />
+                    <text x="260" y="120" fill="#f97316" font-size="11">compile</text>
+
+                    <!-- Arrows Script -> Server -->
+                    <path d="M 570 70 L 500 180" stroke="#3b82f6" stroke-width="2" fill="none"
+                        marker-end="url(#arrowhead)" />
+                    <text x="530" y="120" fill="#3b82f6" font-size="11">register</text>
+
+                    <!-- Arrow Server -> Editor -->
+                    <path d="M 400 240 L 400 300" stroke="#a855f7" stroke-width="2" fill="none"
+                        marker-end="url(#arrowhead)" />
+                    <text x="410" y="275" fill="#a855f7" font-size="11">execute</text>
+
+                    <!-- Arrow markers -->
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                            <polygon points="0 0, 10 3, 0 6" fill="#94a3b8" />
+                        </marker>
+                    </defs>
+                </svg>
+            </div>
+
+            <div class="diagram-container" style="margin-top: 2rem;">
+                <h3 class="diagram-title">Tool Creation Lifecycle</h3>
+                <svg viewBox="0 0 800 200" style="width: 100%; max-width: 800px; margin: 0 auto; display: block;">
+                    <!-- Step 1: Design -->
+                    <rect x="20" y="50" width="160" height="100" rx="8" fill="rgba(124, 58, 237, 0.15)" stroke="#7c3aed"
+                        stroke-width="2" />
+                    <text x="100" y="75" text-anchor="middle" fill="#a855f7" font-size="14" font-weight="bold">1.
+                        Design</text>
+                    <text x="100" y="95" text-anchor="middle" fill="#94a3b8" font-size="11">Define inputs,</text>
+                    <text x="100" y="110" text-anchor="middle" fill="#94a3b8" font-size="11">outputs, schema</text>
+                    <text x="100" y="130" text-anchor="middle" fill="#10b981" font-size="10">📋</text>
+
+                    <!-- Step 2: Implement -->
+                    <rect x="220" y="50" width="160" height="100" rx="8" fill="rgba(124, 58, 237, 0.15)"
+                        stroke="#7c3aed" stroke-width="2" />
+                    <text x="300" y="75" text-anchor="middle" fill="#a855f7" font-size="14" font-weight="bold">2.
+                        Implement</text>
+                    <text x="300" y="95" text-anchor="middle" fill="#94a3b8" font-size="11">Write Rust</text>
+                    <text x="300" y="110" text-anchor="middle" fill="#94a3b8" font-size="11">or Script code</text>
+                    <text x="300" y="130" text-anchor="middle" fill="#10b981" font-size="10">💻</text>
+
+                    <!-- Step 3: Test -->
+                    <rect x="420" y="50" width="160" height="100" rx="8" fill="rgba(124, 58, 237, 0.15)"
+                        stroke="#7c3aed" stroke-width="2" />
+                    <text x="500" y="75" text-anchor="middle" fill="#a855f7" font-size="14" font-weight="bold">3.
+                        Test</text>
+                    <text x="500" y="95" text-anchor="middle" fill="#94a3b8" font-size="11">Validate &</text>
+                    <text x="500" y="110" text-anchor="middle" fill="#94a3b8" font-size="11">compile check</text>
+                    <text x="500" y="130" text-anchor="middle" fill="#10b981" font-size="10">🧪</text>
+
+                    <!-- Step 4: Finalize -->
+                    <rect x="620" y="50" width="160" height="100" rx="8" fill="rgba(16, 185, 129, 0.15)"
+                        stroke="#10b981" stroke-width="2" />
+                    <text x="700" y="75" text-anchor="middle" fill="#10b981" font-size="14" font-weight="bold">4.
+                        Finalize</text>
+                    <text x="700" y="95" text-anchor="middle" fill="#94a3b8" font-size="11">Register &</text>
+                    <text x="700" y="110" text-anchor="middle" fill="#94a3b8" font-size="11">persist tool</text>
+                    <text x="700" y="130" text-anchor="middle" fill="#10b981" font-size="10">✅</text>
+
+                    <!-- Arrows -->
+                    <path d="M 180 100 L 220 100" stroke="#7c3aed" stroke-width="2" fill="none"
+                        marker-end="url(#arrowhead2)" />
+                    <path d="M 380 100 L 420 100" stroke="#7c3aed" stroke-width="2" fill="none"
+                        marker-end="url(#arrowhead2)" />
+                    <path d="M 580 100 L 620 100" stroke="#10b981" stroke-width="2" fill="none"
+                        marker-end="url(#arrowhead2)" />
+
+                    <defs>
+                        <marker id="arrowhead2" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                            <polygon points="0 0, 10 3, 0 6" fill="#7c3aed" />
+                        </marker>
+                    </defs>
+                </svg>
             </div>
         </div>
     </section>
