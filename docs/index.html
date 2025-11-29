@@ -158,6 +158,13 @@
             margin-bottom: 2rem;
         }
 
+        .version-badge {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: var(--success);
+            margin-left: 0.5rem;
+        }
+
         h1 {
             font-size: clamp(2.5rem, 6vw, 4.5rem);
             font-weight: 700;
@@ -241,7 +248,7 @@
 
         .features-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 1.5rem;
         }
 
@@ -274,6 +281,65 @@
             font-size: 0.95rem;
         }
 
+        /* Tools Table */
+        .tools-section {
+            padding: 6rem 0;
+        }
+
+        .tools-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--bg-card);
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        .tools-table th,
+        .tools-table td {
+            padding: 1rem 1.5rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .tools-table th {
+            background: rgba(124, 58, 237, 0.1);
+            color: var(--accent-secondary);
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .tools-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .tools-table tr:hover td {
+            background: rgba(124, 58, 237, 0.05);
+        }
+
+        .tool-name {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-secondary);
+            font-weight: 500;
+        }
+
+        .tool-desc {
+            color: var(--text-secondary);
+        }
+
+        .tool-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-core { background: rgba(124, 58, 237, 0.2); color: var(--accent-secondary); }
+        .badge-new { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+
         /* Code Example */
         .code-section {
             padding: 6rem 0;
@@ -283,6 +349,7 @@
             display: flex;
             gap: 0.5rem;
             margin-bottom: 1rem;
+            flex-wrap: wrap;
         }
 
         .code-tab {
@@ -411,6 +478,36 @@
             color: var(--text-secondary);
         }
 
+        /* Editors Section */
+        .editors-section {
+            padding: 4rem 0;
+        }
+
+        .editors-grid {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .editor-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.25rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .editor-badge:hover {
+            border-color: var(--accent-primary);
+            color: var(--text-primary);
+        }
+
         /* Footer */
         footer {
             padding: 4rem 0 2rem;
@@ -464,6 +561,15 @@
             .arch-diagram pre {
                 font-size: 0.7rem;
             }
+
+            .tools-table {
+                font-size: 0.85rem;
+            }
+
+            .tools-table th,
+            .tools-table td {
+                padding: 0.75rem 1rem;
+            }
         }
     </style>
 </head>
@@ -478,6 +584,7 @@
             </div>
             <ul class="nav-links">
                 <li><a href="#features">Features</a></li>
+                <li><a href="#tools">Tools</a></li>
                 <li><a href="#examples">Examples</a></li>
                 <li><a href="#how-it-works">How it Works</a></li>
             </ul>
@@ -494,13 +601,14 @@
         <div class="container">
             <div class="hero-badge">
                 🚀 MCP Server for Dynamic Tool Creation
+                <span class="hero-badge version-badge">v0.1.1</span>
             </div>
             <h1>
                 Let Your AI<br>
                 <span class="gradient">Build Its Own Tools</span>
             </h1>
             <p class="hero-subtitle">
-                Skillz is a self-extending MCP server. Create WASM tools from Rust or register scripts in any language—Python, Node.js, Ruby, Bash—at runtime.
+                Skillz is a self-extending MCP server. Create WASM tools from Rust or register scripts in any language—Python, Node.js, Ruby, Bash—at runtime. Now with automatic dependency management.
             </p>
             <div class="hero-buttons">
                 <a href="#install" class="btn btn-primary">
@@ -550,9 +658,19 @@ cargo install skillz</code></pre>
 }</code></pre>
                     </div>
                 </div>
-                <p style="color: var(--text-muted); margin-top: 1.5rem; font-size: 0.9rem;">
-                    Works with Cursor, Claude Desktop, VS Code, and any MCP client
-                </p>
+            </div>
+        </div>
+    </section>
+
+    <section class="editors-section">
+        <div class="container">
+            <p style="text-align: center; color: var(--text-muted); margin-bottom: 1rem;">Works with your favorite editor</p>
+            <div class="editors-grid">
+                <span class="editor-badge">🖱️ Cursor</span>
+                <span class="editor-badge">🤖 Claude Desktop</span>
+                <span class="editor-badge">💻 VS Code</span>
+                <span class="editor-badge">🏄 Windsurf</span>
+                <span class="editor-badge">⚡ Zed</span>
             </div>
         </div>
     </section>
@@ -575,6 +693,11 @@ cargo install skillz</code></pre>
                     <p>Register tools in Python, Node.js, Ruby, Bash, or any language. Scripts communicate via JSON-RPC 2.0 protocol.</p>
                 </div>
                 <div class="feature-card">
+                    <div class="feature-icon">📦</div>
+                    <h3>Dependency Management</h3>
+                    <p>Automatic pip/npm dependency installation. Each tool gets its own isolated virtual environment that persists across restarts.</p>
+                </div>
+                <div class="feature-card">
                     <div class="feature-icon">🔧</div>
                     <h3>Sequential Creation</h3>
                     <p>Build skills step-by-step with guided workflow: Design → Implement → Test → Finalize. Perfect for complex tools.</p>
@@ -582,24 +705,99 @@ cargo install skillz</code></pre>
                 <div class="feature-card">
                     <div class="feature-icon">📡</div>
                     <h3>Full MCP Protocol</h3>
-                    <p>Resources, roots, logging, progress updates, elicitation, and sampling support. Works with Cursor, Claude Desktop, and more.</p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">📦</div>
-                    <h3>Dependency Management</h3>
-                    <p>Automatic dependency installation for Python (pip) and Node.js (npm). Isolated virtual environments per tool.</p>
+                    <p>Resources, roots, logging, progress updates, elicitation, and sampling support. Complete MCP compatibility.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">💾</div>
                     <h3>Persistent Tools</h3>
-                    <p>Tools and dependencies persist across restarts. Build your toolbox over time.</p>
+                    <p>Tools, dependencies, and environments persist across restarts. Build your AI's toolbox over time.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">🔒</div>
                     <h3>Secure Sandbox</h3>
                     <p>WASM tools run in isolated WebAssembly environment. Scripts execute as separate processes with filtered environment.</p>
                 </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🚀</div>
+                    <h3>Auto-Publish CI</h3>
+                    <p>Every version bump automatically publishes to crates.io via GitHub Actions. Always up to date.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📖</div>
+                    <h3>Dynamic Guide</h3>
+                    <p>Built-in <code>skillz://guide</code> resource that automatically updates when new tools are added.</p>
+                </div>
             </div>
+        </div>
+    </section>
+
+    <section class="tools-section" id="tools">
+        <div class="container">
+            <div class="section-title">
+                <h2>🛠️ Available Tools</h2>
+                <p>Built-in tools for creating and managing your AI toolkit</p>
+            </div>
+            <table class="tools-table">
+                <thead>
+                    <tr>
+                        <th>Tool</th>
+                        <th>Description</th>
+                        <th>Type</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="tool-name">build_tool</td>
+                        <td class="tool-desc">Compile Rust code → WASM tool. Automatically handles cargo build.</td>
+                        <td><span class="tool-badge badge-core">Core</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">register_script</td>
+                        <td class="tool-desc">Register script tool with optional dependencies (pip/npm packages).</td>
+                        <td><span class="tool-badge badge-core">Core</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">create_skill</td>
+                        <td class="tool-desc">Step-by-step skill creation: Design → Implement → Test → Finalize.</td>
+                        <td><span class="tool-badge badge-core">Core</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">call_tool</td>
+                        <td class="tool-desc">Execute any registered tool (WASM or script) by name.</td>
+                        <td><span class="tool-badge badge-core">Core</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">list_tools</td>
+                        <td class="tool-desc">List all available tools grouped by type.</td>
+                        <td><span class="tool-badge badge-core">Core</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">install_deps</td>
+                        <td class="tool-desc">Install dependencies for existing script tools.</td>
+                        <td><span class="tool-badge badge-new">New</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">delete_tool</td>
+                        <td class="tool-desc">Delete a tool and clean up its files and environments.</td>
+                        <td><span class="tool-badge badge-new">New</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">test_validate</td>
+                        <td class="tool-desc">Validate Rust code before building (syntax check).</td>
+                        <td><span class="tool-badge badge-core">Core</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">add_root</td>
+                        <td class="tool-desc">Add a workspace root for script file access.</td>
+                        <td><span class="tool-badge badge-core">Core</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">list_roots</td>
+                        <td class="tool-desc">List all workspace roots available to scripts.</td>
+                        <td><span class="tool-badge badge-core">Core</span></td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </section>
 
@@ -612,7 +810,8 @@ cargo install skillz</code></pre>
             <div class="code-tabs">
                 <button class="code-tab active" data-lang="rust">🦀 Rust (WASM)</button>
                 <button class="code-tab" data-lang="python">🐍 Python</button>
-                <button class="code-tab" data-lang="nodejs">💚 Node.js</button>
+                <button class="code-tab" data-lang="deps">📦 With Dependencies</button>
+                <button class="code-tab" data-lang="sequential">🔧 Sequential</button>
             </div>
             <div class="code-block">
                 <div class="code-header">
@@ -650,20 +849,23 @@ cargo install skillz</code></pre>
             </div>
             <div class="arch-diagram">
                 <pre>
-┌─────────────────────────────────────────────────────────────┐
-│                    AI Assistant (Claude, etc.)               │
-└───────────────────────────┬─────────────────────────────────┘
-                            │ MCP Protocol
-┌───────────────────────────▼─────────────────────────────────┐
-│                     Skillz MCP Server                        │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐ │
-│  │   WASM Tools    │  │  Script Tools   │  │  Sequential  │ │
-│  │  (Rust → WASM)  │  │ (Any Language)  │  │   Creation   │ │
-│  └─────────────────┘  └─────────────────┘  └──────────────┘ │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │              Tool Registry & Runtime                    ││
-│  └─────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                  AI Assistant (Claude, Cursor, etc.)             │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │ MCP Protocol
+┌───────────────────────────────▼─────────────────────────────────┐
+│                       Skillz MCP Server                          │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
+│  │   WASM Tools    │  │  Script Tools   │  │   Sequential    │  │
+│  │  (Rust → WASM)  │  │ (Any Language)  │  │    Creation     │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │           Tool Registry & Dependency Manager              │  │
+│  │    • Virtual environments (Python venv, Node modules)     │  │
+│  │    • Auto-install pip/npm packages                        │  │
+│  │    • Persistent tool storage                              │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
                 </pre>
             </div>
         </div>
@@ -680,28 +882,28 @@ cargo install skillz</code></pre>
                     <div class="step-number">1</div>
                     <div class="step-content">
                         <h3>Write Code</h3>
-                        <p>AI writes Rust code for WASM tools or scripts in any language (Python, Node.js, etc.)</p>
+                        <p>AI writes Rust code for WASM tools or scripts in any language (Python, Node.js, etc.). Specify dependencies if needed.</p>
                     </div>
                 </div>
                 <div class="step">
                     <div class="step-number">2</div>
                     <div class="step-content">
                         <h3>Compile & Register</h3>
-                        <p>WASM tools are compiled using cargo. Scripts are saved with appropriate interpreter.</p>
+                        <p>WASM tools are compiled using cargo. Scripts are saved with appropriate interpreter. Dependencies are installed in isolated environments.</p>
                     </div>
                 </div>
                 <div class="step">
                     <div class="step-number">3</div>
                     <div class="step-content">
                         <h3>Execute</h3>
-                        <p>WASM runs in Wasmtime sandbox. Scripts execute via subprocess with JSON-RPC 2.0 protocol.</p>
+                        <p>WASM runs in Wasmtime sandbox. Scripts execute via subprocess with JSON-RPC 2.0 protocol using their virtual environment.</p>
                     </div>
                 </div>
                 <div class="step">
                     <div class="step-number">4</div>
                     <div class="step-content">
                         <h3>Persist</h3>
-                        <p>Tools are stored on disk and available across server restarts. Build your AI's toolbox over time.</p>
+                        <p>Tools, dependencies, and environments are stored on disk. Available across server restarts. Build your AI's toolbox over time.</p>
                     </div>
                 </div>
             </div>
@@ -712,9 +914,10 @@ cargo install skillz</code></pre>
         <div class="container">
             <div class="footer-links">
                 <a href="https://github.com/Algiras/skillz">GitHub</a>
+                <a href="https://crates.io/crates/skillz">crates.io</a>
                 <a href="https://github.com/Algiras/skillz/blob/master/README.md">Documentation</a>
                 <a href="https://github.com/Algiras/skillz/blob/master/CONTRIBUTING.md">Contributing</a>
-                <a href="https://github.com/Algiras/skillz/blob/master/LICENSE">License</a>
+                <a href="https://github.com/Algiras/skillz/blob/master/LICENSE">MIT License</a>
             </div>
             <div class="footer-bottom">
                 Built with ❤️ for AI-powered development
@@ -762,25 +965,52 @@ print(json.dumps({'jsonrpc': '2.0', 'result': result, 'id': request['id']}))
   <span class="string">description</span>: <span class="string">"Counts words and characters"</span>
 )`
             },
-            nodejs: {
-                icon: '💚',
-                name: 'Node.js Script Tool',
-                code: `<span class="comment">// Register a Node.js JSON formatter</span>
+            deps: {
+                icon: '📦',
+                name: 'Tool with Dependencies',
+                code: `<span class="comment"># Register a tool with pip dependencies</span>
 <span class="function">register_script</span>(
-  <span class="string">name</span>: <span class="string">"json_format"</span>,
-  <span class="string">interpreter</span>: <span class="string">"node"</span>,
-  <span class="string">code</span>: <span class="string">\`const readline = require('readline');
-const rl = readline.createInterface({input: process.stdin});
+  <span class="string">name</span>: <span class="string">"http_client"</span>,
+  <span class="string">interpreter</span>: <span class="string">"python3"</span>,
+  <span class="string">dependencies</span>: [<span class="string">"requests"</span>, <span class="string">"urllib3"</span>],
+  <span class="string">code</span>: <span class="string">"""#!/usr/bin/env python3
+import json, sys, requests
 
-rl.on('line', (line) => {
-    const req = JSON.parse(line);
-    const data = req.params.arguments.data || {};
-    const result = JSON.stringify(data, null, 2);
-    console.log(JSON.stringify({jsonrpc: '2.0', result: {formatted: result}, id: req.id}));
-    process.exit(0);
-});\`</span>,
-  <span class="string">description</span>: <span class="string">"Formats JSON with indentation"</span>
+req = json.loads(sys.stdin.read())
+url = req['params']['arguments'].get('url')
+resp = requests.get(url, timeout=10)
+result = {'status': resp.status_code, 'body': resp.text[:500]}
+print(json.dumps({'jsonrpc': '2.0', 'result': result, 'id': req['id']}))
+"""</span>,
+  <span class="string">description</span>: <span class="string">"HTTP client with requests library"</span>
+)
+
+<span class="comment"># Or install deps later</span>
+<span class="function">install_deps</span>(
+  <span class="string">tool_name</span>: <span class="string">"my_tool"</span>,
+  <span class="string">dependencies</span>: [<span class="string">"pandas"</span>, <span class="string">"numpy"</span>]
 )`
+            },
+            sequential: {
+                icon: '🔧',
+                name: 'Sequential Creation',
+                code: `<span class="comment">// Step 1: Design</span>
+<span class="function">create_skill</span>(
+  <span class="string">name</span>: <span class="string">"data_processor"</span>,
+  <span class="string">skill_type</span>: <span class="string">"script"</span>,
+  <span class="string">step</span>: <span class="number">1</span>,  <span class="comment">// design</span>
+  <span class="string">content</span>: <span class="string">"Tool that processes CSV data with pandas"</span>,
+  <span class="string">description</span>: <span class="string">"CSV data processor"</span>
+)
+
+<span class="comment">// Step 2: Implement</span>
+<span class="function">create_skill</span>(step: <span class="number">2</span>, content: <span class="string">"...code..."</span>, ...)
+
+<span class="comment">// Step 3: Test</span>
+<span class="function">create_skill</span>(step: <span class="number">3</span>, content: <span class="string">"test results"</span>, ...)
+
+<span class="comment">// Step 4: Finalize</span>
+<span class="function">create_skill</span>(step: <span class="number">4</span>, content: <span class="string">"ready"</span>, ...)`
             }
         };
 
