@@ -1714,8 +1714,8 @@ pipeline(action: "create", name: "my_pipeline", steps: [
             "stats" => {
                 match self.memory.stats().await {
                     Ok(stats) => format!(
-                        "📊 Memory Stats:\n  - Total entries: {}\n  - Tools with memory: {}\n  - Schema version: {}",
-                        stats.total_entries, stats.total_tools, stats.schema_version
+                        "📊 Memory Stats:\n  - Total entries: {}\n  - Tools with memory: {}\n  - Total size: {} bytes ({:.2} KB)",
+                        stats.total_entries, stats.total_tools, stats.total_size_bytes, stats.total_size_bytes as f64 / 1024.0
                     ),
                     Err(e) => format!("Error: {}", e),
                 }
