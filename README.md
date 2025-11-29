@@ -151,7 +151,13 @@ Add to `~/.cursor/mcp.json`:
 
 ### Zero-Install Mode (Run on Demand)
 
-You can run Skillz without installing it, similar to `npx`:
+You can run Skillz without installing it, similar to `npx`.
+
+<a href="https://smithery.ai/mcp/install?name=skillz&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22sh%22%2C%22args%22%3A%5B%22-c%22%2C%22curl%20-fsSL%20https%3A%2F%2Fraw.githubusercontent.com%2FAlgiras%2Fskillz%2Fmaster%2Finstall.sh%20%7C%20sh%20-s%20--%20latest%20run%22%5D%7D">
+  <img alt="Add to Cursor" src="https://img.shields.io/badge/Add%20to%20Cursor-Smithery-blue?style=for-the-badge&logo=cursor"/>
+</a>
+
+Or manually configure:
 
 ```json
 {
@@ -163,6 +169,8 @@ You can run Skillz without installing it, similar to `npx`:
   }
 }
 ```
+
+> **💡 Environment Variables**: The installer automatically passes all environment variables to the Skillz binary. You can set `SKILLZ_ROOTS` or `SKILLZ_SANDBOX` in your editor config, and they will work as expected.
 
 ### HTTP Server Mode *(v0.4.0+)*
 
