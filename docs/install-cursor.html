@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Install Skillz in Cursor</title>
+    <meta http-equiv="refresh" content="0;url=cursor://anysphere.cursor-deeplink/mcp/install?name=skillz&config=eyJ0eXBlIjogInN0ZGlvIiwgImNvbW1hbmQiOiAic2tpbGx6In0=">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 40px;
+        }
+        h1 { margin-bottom: 20px; }
+        p { opacity: 0.8; margin-bottom: 30px; }
+        a {
+            display: inline-block;
+            background: #007acc;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        a:hover { background: #0098ff; }
+        .manual {
+            margin-top: 40px;
+            padding: 20px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            text-align: left;
+        }
+        code {
+            background: rgba(0,0,0,0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        pre {
+            background: rgba(0,0,0,0.3);
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Installing Skillz in Cursor</h1>
+        <p>If you're not redirected automatically, click the button below:</p>
+        <a href="cursor://anysphere.cursor-deeplink/mcp/install?name=skillz&config=eyJ0eXBlIjogInN0ZGlvIiwgImNvbW1hbmQiOiAic2tpbGx6In0=">
+            Open in Cursor
+        </a>
+        
+        <div class="manual">
+            <h3>Manual Installation</h3>
+            <p>Add to <code>~/.cursor/mcp.json</code>:</p>
+            <pre>{
+  "mcpServers": {
+    "skillz": {
+      "command": "skillz"
+    }
+  }
+}</pre>
+            <p style="margin-top: 15px;">Make sure <code>skillz</code> is installed:</p>
+            <pre>cargo install skillz</pre>
+        </div>
+    </div>
+</body>
+</html>
+

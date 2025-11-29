@@ -114,9 +114,7 @@ Your support enables new features and improvements!
 
 ### Cursor IDE
 
-<a href="cursor://anysphere.cursor-deeplink/mcp/install?name=skillz&config=eyJ0eXBlIjogInN0ZGlvIiwgImNvbW1hbmQiOiAic2tpbGx6In0=">
-  <img src="https://cursor.com/deeplink/mcp-install-dark.png" alt="Add to Cursor" height="32" />
-</a>
+[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.png)](https://algiras.github.io/skillz/install-cursor.html)
 
 Or add manually to `~/.cursor/mcp.json`:
 
