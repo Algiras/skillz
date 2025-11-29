@@ -17,37 +17,34 @@ pub enum ToolType {
 }
 
 /// Tool annotations - hints about tool behavior for clients
-/// Based on MCP specification: https://modelcontextprotocol.io/specification/2025-06-18/schema
+/// Based on MCP specification
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolAnnotations {
     /// Human-readable title for the tool (display name)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// If true, the tool performs read-only operations (doesn't modify state)
+    /// If true, the tool performs read-only operations
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         rename = "readOnlyHint"
     )]
     pub read_only_hint: Option<bool>,
-    /// If true, the tool may perform destructive updates (delete, overwrite)
-    /// Only meaningful when read_only_hint is false
+    /// If true, the tool may perform destructive updates
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         rename = "destructiveHint"
     )]
     pub destructive_hint: Option<bool>,
-    /// If true, calling the tool repeatedly with same args has no additional effect
-    /// Only meaningful when read_only_hint is false
+    /// If true, calling repeatedly with same args has no additional effect
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         rename = "idempotentHint"
     )]
     pub idempotent_hint: Option<bool>,
-    /// If true, this tool may interact with external systems (network, APIs, etc.)
-    /// If false, the tool's domain of interaction is closed/local
+    /// If true, may interact with external systems
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -57,34 +54,6 @@ pub struct ToolAnnotations {
 }
 
 impl ToolAnnotations {
-    /// Create annotations for a read-only tool
-    pub fn read_only() -> Self {
-        Self {
-            read_only_hint: Some(true),
-            destructive_hint: Some(false),
-            ..Default::default()
-        }
-    }
-
-    /// Create annotations for a tool that modifies state
-    pub fn read_write(destructive: bool, idempotent: bool) -> Self {
-        Self {
-            read_only_hint: Some(false),
-            destructive_hint: Some(destructive),
-            idempotent_hint: Some(idempotent),
-            ..Default::default()
-        }
-    }
-
-    /// Create annotations for a tool that accesses external systems
-    pub fn open_world() -> Self {
-        Self {
-            open_world_hint: Some(true),
-            ..Default::default()
-        }
-    }
-
-    /// Create from JSON value
     pub fn from_value(value: serde_json::Value) -> Self {
         serde_json::from_value(value).unwrap_or_default()
     }
@@ -93,25 +62,19 @@ impl ToolAnnotations {
 /// JSON Schema definition for tool inputs/outputs
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolSchema {
-    /// JSON Schema type (e.g., "object", "string", "number")
     #[serde(rename = "type", default)]
     pub schema_type: String,
-    /// Schema properties (for object type)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub properties: Option<serde_json::Value>,
-    /// Required properties
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required: Vec<String>,
-    /// Schema description
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Additional JSON Schema fields
     #[serde(flatten)]
     pub extra: serde_json::Value,
 }
 
 impl ToolSchema {
-    /// Create an empty/any schema
     pub fn any() -> Self {
         Self {
             schema_type: "object".to_string(),
@@ -122,52 +85,156 @@ impl ToolSchema {
         }
     }
 
-    /// Create schema from JSON value
     pub fn from_value(value: serde_json::Value) -> Self {
         serde_json::from_value(value).unwrap_or_else(|_| Self::any())
     }
+}
 
-    /// Convert to JSON value
-    pub fn to_value(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or(serde_json::json!({"type": "object"}))
+/// Tool manifest - stored as manifest.json in each tool's directory
+/// This is the shareable format that people can copy between installations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolManifest {
+    /// Tool name (must match directory name)
+    pub name: String,
+    /// Semantic version (e.g., "1.0.0")
+    #[serde(default = "default_version")]
+    pub version: String,
+    /// What the tool does
+    pub description: String,
+    /// Tool type: wasm or script
+    #[serde(default)]
+    pub tool_type: ToolType,
+    /// For script tools: interpreter command (python3, node, ruby, bash)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interpreter: Option<String>,
+    /// Input schema - JSON Schema for arguments
+    #[serde(default)]
+    pub input_schema: ToolSchema,
+    /// Output schema - JSON Schema for result (optional)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<ToolSchema>,
+    /// Behavior hints for clients
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ToolAnnotations>,
+    /// Script dependencies (pip/npm packages)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+    /// WASM/Rust dependencies (crates) - format: "name@version" or "name@version[feat1,feat2]"
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wasm_dependencies: Vec<String>,
+    /// Tool author (optional, for sharing)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// License (optional, for sharing)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    /// Repository URL (optional)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
+    /// Tags for categorization
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// When the tool was created (ISO 8601)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    /// When the tool was last updated (ISO 8601)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+fn default_version() -> String {
+    "1.0.0".to_string()
+}
+
+impl ToolManifest {
+    pub fn new(name: String, description: String, tool_type: ToolType) -> Self {
+        let now = chrono_now();
+        Self {
+            name,
+            version: "1.0.0".to_string(),
+            description,
+            tool_type,
+            interpreter: None,
+            input_schema: ToolSchema::any(),
+            output_schema: None,
+            annotations: None,
+            dependencies: vec![],
+            wasm_dependencies: vec![],
+            author: None,
+            license: None,
+            repository: None,
+            tags: vec![],
+            created_at: Some(now.clone()),
+            updated_at: Some(now),
+        }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Runtime tool configuration (includes paths resolved at load time)
+#[derive(Debug, Clone)]
 pub struct ToolConfig {
-    pub name: String,
-    pub description: String,
-    /// Tool type determines how it's executed
-    #[serde(default)]
-    pub tool_type: ToolType,
+    /// The manifest data
+    pub manifest: ToolManifest,
+    /// Directory containing this tool
+    pub tool_dir: PathBuf,
     /// Path to WASM file (for Wasm tools)
-    #[serde(default)]
     pub wasm_path: PathBuf,
-    /// Path to script/executable (for Script tools)
-    #[serde(default)]
+    /// Path to script file (for Script tools)
     pub script_path: PathBuf,
-    /// Command to run the script (e.g., "python3", "node", "ruby")
-    /// If empty, the script is executed directly (must be executable)
-    #[serde(default)]
-    pub interpreter: Option<String>,
-    /// Input schema - JSON Schema describing expected arguments
-    #[serde(default)]
-    pub input_schema: ToolSchema,
-    /// Output schema - JSON Schema describing structured output (optional, for structured responses)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_schema: Option<ToolSchema>,
-    /// Tool annotations - hints about behavior (readOnly, destructive, etc.)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub annotations: Option<ToolAnnotations>,
-    /// Dependencies for script tools (pip packages, npm modules, etc.)
-    #[serde(default)]
-    pub dependencies: Vec<String>,
-    /// Path to virtual environment (for Python) or node_modules (for Node.js)
-    #[serde(default)]
+    /// Path to virtual environment
     pub env_path: Option<PathBuf>,
     /// Whether dependencies have been installed
-    #[serde(default)]
     pub deps_installed: bool,
+}
+
+impl ToolConfig {
+    // Convenience accessors that delegate to manifest
+    pub fn name(&self) -> &str {
+        &self.manifest.name
+    }
+    pub fn description(&self) -> &str {
+        &self.manifest.description
+    }
+    pub fn tool_type(&self) -> &ToolType {
+        &self.manifest.tool_type
+    }
+    pub fn interpreter(&self) -> Option<&str> {
+        self.manifest.interpreter.as_deref()
+    }
+    pub fn dependencies(&self) -> &[String] {
+        &self.manifest.dependencies
+    }
+    pub fn wasm_dependencies(&self) -> &[String] {
+        &self.manifest.wasm_dependencies
+    }
+    pub fn input_schema(&self) -> &ToolSchema {
+        &self.manifest.input_schema
+    }
+    pub fn output_schema(&self) -> Option<&ToolSchema> {
+        self.manifest.output_schema.as_ref()
+    }
+    pub fn annotations(&self) -> Option<&ToolAnnotations> {
+        self.manifest.annotations.as_ref()
+    }
+}
+
+/// Get current timestamp in ISO 8601 format
+fn chrono_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = duration.as_secs();
+    // Simple ISO 8601 format without external dependency
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        1970 + secs / 31536000,
+        (secs % 31536000) / 2592000 + 1,
+        (secs % 2592000) / 86400 + 1,
+        (secs % 86400) / 3600,
+        (secs % 3600) / 60,
+        secs % 60
+    )
 }
 
 #[derive(Clone)]
@@ -178,66 +245,311 @@ pub struct ToolRegistry {
 
 impl ToolRegistry {
     pub fn new(storage_dir: PathBuf) -> Self {
-        let manifest_path = storage_dir.join("manifest.json");
+        let _ = fs::create_dir_all(&storage_dir);
 
-        // Load existing tools from manifest if it exists
-        let tools = if manifest_path.exists() {
-            match fs::read_to_string(&manifest_path) {
-                Ok(content) => {
-                    match serde_json::from_str::<HashMap<String, ToolConfig>>(&content) {
-                        Ok(loaded) => {
-                            let wasm_count = loaded
-                                .values()
-                                .filter(|t| t.tool_type == ToolType::Wasm)
-                                .count();
-                            let script_count = loaded
-                                .values()
-                                .filter(|t| t.tool_type == ToolType::Script)
-                                .count();
-                            eprintln!(
-                                "Loaded {} tools ({} WASM, {} Script)",
-                                loaded.len(),
-                                wasm_count,
-                                script_count
-                            );
-                            Arc::new(RwLock::new(loaded))
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to parse manifest: {}", e);
-                            Arc::new(RwLock::new(HashMap::new()))
+        let registry = Self {
+            tools: Arc::new(RwLock::new(HashMap::new())),
+            storage_dir,
+        };
+
+        // Load tools from directory structure
+        registry.load_all_tools();
+
+        // Migrate old format if needed
+        registry.migrate_old_format();
+
+        registry
+    }
+
+    /// Load all tools from the directory structure
+    fn load_all_tools(&self) {
+        let mut tools = self.tools.write().unwrap();
+        tools.clear();
+
+        // Scan storage directory for tool directories
+        if let Ok(entries) = fs::read_dir(&self.storage_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let manifest_path = path.join("manifest.json");
+                    if manifest_path.exists() {
+                        if let Ok(config) = self.load_tool_from_dir(&path) {
+                            tools.insert(config.manifest.name.clone(), config);
                         }
                     }
                 }
-                Err(e) => {
-                    eprintln!("Failed to read manifest: {}", e);
-                    Arc::new(RwLock::new(HashMap::new()))
-                }
             }
-        } else {
-            Arc::new(RwLock::new(HashMap::new()))
+        }
+
+        let wasm_count = tools.values().filter(|t| *t.tool_type() == ToolType::Wasm).count();
+        let script_count = tools.values().filter(|t| *t.tool_type() == ToolType::Script).count();
+        eprintln!(
+            "Loaded {} tools ({} WASM, {} Script)",
+            tools.len(),
+            wasm_count,
+            script_count
+        );
+    }
+
+    /// Load a single tool from its directory
+    fn load_tool_from_dir(&self, tool_dir: &PathBuf) -> Result<ToolConfig> {
+        let manifest_path = tool_dir.join("manifest.json");
+        let content = fs::read_to_string(&manifest_path)?;
+        let manifest: ToolManifest = serde_json::from_str(&content)?;
+
+        let tool_name = &manifest.name;
+
+        // Determine file paths based on tool type
+        let (wasm_path, script_path) = match manifest.tool_type {
+            ToolType::Wasm => {
+                let wasm = tool_dir.join(format!("{}.wasm", tool_name));
+                (wasm, PathBuf::new())
+            }
+            ToolType::Script => {
+                // Find script file with appropriate extension
+                let ext = match manifest.interpreter.as_deref() {
+                    Some("python3") | Some("python") => "py",
+                    Some("node") | Some("nodejs") => "js",
+                    Some("ruby") => "rb",
+                    Some("bash") | Some("sh") => "sh",
+                    Some("perl") => "pl",
+                    Some("php") => "php",
+                    _ => "script",
+                };
+                let script = tool_dir.join(format!("{}.{}", tool_name, ext));
+                (PathBuf::new(), script)
+            }
         };
 
-        // Create scripts directory
-        let scripts_dir = storage_dir.join("scripts");
-        let _ = fs::create_dir_all(&scripts_dir);
+        // Check for environment directory
+        let env_path = tool_dir.join("env");
+        let env_exists = env_path.exists();
 
-        Self { tools, storage_dir }
+        Ok(ToolConfig {
+            manifest,
+            tool_dir: tool_dir.clone(),
+            wasm_path,
+            script_path,
+            env_path: if env_exists { Some(env_path) } else { None },
+            deps_installed: env_exists,
+        })
     }
 
-    fn save_manifest(&self) -> Result<()> {
-        let manifest_path = self.storage_dir.join("manifest.json");
-        let tools = self.tools.read().unwrap();
-        let json = serde_json::to_string_pretty(&*tools)?;
-        fs::write(manifest_path, json)?;
-        Ok(())
+    /// Migrate from old single manifest.json format to per-tool directories
+    fn migrate_old_format(&self) {
+        let old_manifest = self.storage_dir.join("manifest.json");
+        let old_scripts_dir = self.storage_dir.join("scripts");
+
+        if !old_manifest.exists() {
+            return;
+        }
+
+        eprintln!("Migrating from old manifest format...");
+
+        // Read old manifest
+        let content = match fs::read_to_string(&old_manifest) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        // Old format structure
+        #[derive(Deserialize)]
+        struct OldToolConfig {
+            name: String,
+            description: String,
+            #[serde(default)]
+            tool_type: ToolType,
+            #[serde(default)]
+            wasm_path: PathBuf,
+            #[serde(default)]
+            script_path: PathBuf,
+            #[serde(default)]
+            interpreter: Option<String>,
+            #[serde(default)]
+            input_schema: Option<serde_json::Value>,
+            #[serde(default)]
+            output_schema: Option<serde_json::Value>,
+            #[serde(default)]
+            annotations: Option<serde_json::Value>,
+            #[serde(default)]
+            dependencies: Vec<String>,
+        }
+
+        let old_tools: HashMap<String, OldToolConfig> = match serde_json::from_str(&content) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+
+        let mut migrated = 0;
+        for (name, old) in old_tools {
+            let tool_dir = self.storage_dir.join(&name);
+
+            // Skip if already migrated
+            if tool_dir.join("manifest.json").exists() {
+                continue;
+            }
+
+            let _ = fs::create_dir_all(&tool_dir);
+
+            // Create new manifest
+            let manifest = ToolManifest {
+                name: name.clone(),
+                version: "1.0.0".to_string(),
+                description: old.description,
+                tool_type: old.tool_type.clone(),
+                interpreter: old.interpreter.clone(),
+                input_schema: old
+                    .input_schema
+                    .map(ToolSchema::from_value)
+                    .unwrap_or_else(ToolSchema::any),
+                output_schema: old.output_schema.map(ToolSchema::from_value),
+                annotations: old.annotations.map(ToolAnnotations::from_value),
+                dependencies: old.dependencies,
+                wasm_dependencies: vec![],
+                author: None,
+                license: None,
+                repository: None,
+                tags: vec![],
+                created_at: Some(chrono_now()),
+                updated_at: Some(chrono_now()),
+            };
+
+            // Save manifest
+            let manifest_json = serde_json::to_string_pretty(&manifest).unwrap();
+            let _ = fs::write(tool_dir.join("manifest.json"), manifest_json);
+
+            // Move tool file
+            match old.tool_type {
+                ToolType::Wasm => {
+                    if old.wasm_path.exists() {
+                        let new_path = tool_dir.join(format!("{}.wasm", name));
+                        let _ = fs::rename(&old.wasm_path, &new_path);
+                    }
+                }
+                ToolType::Script => {
+                    if old.script_path.exists() {
+                        let ext = old
+                            .script_path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("script");
+                        let new_path = tool_dir.join(format!("{}.{}", name, ext));
+                        let _ = fs::rename(&old.script_path, &new_path);
+                    }
+                }
+            }
+
+            migrated += 1;
+        }
+
+        if migrated > 0 {
+            eprintln!("Migrated {} tools to new directory format", migrated);
+
+            // Backup and remove old manifest
+            let _ = fs::rename(&old_manifest, self.storage_dir.join("manifest.json.bak"));
+
+            // Remove old scripts directory if empty
+            if old_scripts_dir.exists() {
+                let _ = fs::remove_dir(&old_scripts_dir); // Only removes if empty
+            }
+
+            // Reload tools
+            self.load_all_tools();
+        }
     }
 
-    pub fn register_tool(&self, config: ToolConfig) -> Result<()> {
+    /// Register a new tool or update existing one
+    pub fn register_tool(&self, manifest: ToolManifest, code: &[u8]) -> Result<ToolConfig> {
+        match manifest.tool_type {
+            ToolType::Wasm => self.register_wasm_tool(manifest, code, ""),
+            ToolType::Script => self.register_script_tool(manifest, code),
+        }
+    }
+
+    /// Register a WASM tool with optional source code preservation
+    pub fn register_wasm_tool(
+        &self,
+        manifest: ToolManifest,
+        wasm_bytes: &[u8],
+        source_code: &str,
+    ) -> Result<ToolConfig> {
+        let tool_dir = self.storage_dir.join(&manifest.name);
+        fs::create_dir_all(&tool_dir)?;
+
+        // Save manifest
+        let manifest_json = serde_json::to_string_pretty(&manifest)?;
+        fs::write(tool_dir.join("manifest.json"), manifest_json)?;
+
+        // Save WASM binary
+        let wasm_path = tool_dir.join(format!("{}.wasm", manifest.name));
+        fs::write(&wasm_path, wasm_bytes)?;
+
+        // Save source code for recompilation if provided
+        if !source_code.is_empty() {
+            fs::write(tool_dir.join("src.rs"), source_code)?;
+        }
+
+        let config = ToolConfig {
+            manifest,
+            tool_dir,
+            wasm_path,
+            script_path: PathBuf::new(),
+            env_path: None,
+            deps_installed: false,
+        };
+
+        // Update in-memory cache
         let mut tools = self.tools.write().unwrap();
-        tools.insert(config.name.clone(), config);
-        drop(tools); // Release lock before saving
-        self.save_manifest()?;
-        Ok(())
+        tools.insert(config.manifest.name.clone(), config.clone());
+
+        Ok(config)
+    }
+
+    /// Register a script tool
+    fn register_script_tool(&self, manifest: ToolManifest, code: &[u8]) -> Result<ToolConfig> {
+        let tool_dir = self.storage_dir.join(&manifest.name);
+        fs::create_dir_all(&tool_dir)?;
+
+        // Save manifest
+        let manifest_json = serde_json::to_string_pretty(&manifest)?;
+        fs::write(tool_dir.join("manifest.json"), manifest_json)?;
+
+        // Save script file
+        let ext = match manifest.interpreter.as_deref() {
+            Some("python3") | Some("python") => "py",
+            Some("node") | Some("nodejs") => "js",
+            Some("ruby") => "rb",
+            Some("bash") | Some("sh") => "sh",
+            Some("perl") => "pl",
+            Some("php") => "php",
+            _ => "script",
+        };
+        let script_path = tool_dir.join(format!("{}.{}", manifest.name, ext));
+        fs::write(&script_path, code)?;
+
+        // Make executable on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&script_path, perms)?;
+        }
+
+        let config = ToolConfig {
+            manifest,
+            tool_dir,
+            wasm_path: PathBuf::new(),
+            script_path,
+            env_path: None,
+            deps_installed: false,
+        };
+
+        // Update in-memory cache
+        let mut tools = self.tools.write().unwrap();
+        tools.insert(config.manifest.name.clone(), config.clone());
+
+        Ok(config)
     }
 
     pub fn get_tool(&self, name: &str) -> Option<ToolConfig> {
@@ -252,55 +564,55 @@ impl ToolRegistry {
         &self.storage_dir
     }
 
-    pub fn scripts_dir(&self) -> PathBuf {
-        self.storage_dir.join("scripts")
-    }
-
-    /// Get directory for tool environments (venvs, node_modules)
-    pub fn envs_dir(&self) -> PathBuf {
-        self.storage_dir.join("envs")
+    /// Get tool directory for a specific tool
+    pub fn tool_dir(&self, name: &str) -> PathBuf {
+        self.storage_dir.join(name)
     }
 
     /// Get environment path for a specific tool
-    pub fn tool_env_path(&self, tool_name: &str, interpreter: Option<&str>) -> PathBuf {
-        let envs_dir = self.envs_dir();
-        match interpreter {
-            Some("python3") | Some("python") => envs_dir.join(format!("{}_venv", tool_name)),
-            Some("node") | Some("nodejs") => envs_dir.join(format!("{}_node", tool_name)),
-            _ => envs_dir.join(tool_name),
-        }
+    pub fn tool_env_path(&self, tool_name: &str) -> PathBuf {
+        self.storage_dir.join(tool_name).join("env")
     }
 
     /// Update tool's dependency status
-    pub fn mark_deps_installed(&self, tool_name: &str, env_path: PathBuf) -> Result<()> {
+    pub fn mark_deps_installed(&self, tool_name: &str) -> Result<()> {
         let mut tools = self.tools.write().unwrap();
         if let Some(tool) = tools.get_mut(tool_name) {
             tool.deps_installed = true;
+            let env_path = tool.tool_dir.join("env");
             tool.env_path = Some(env_path);
         }
-        drop(tools);
-        self.save_manifest()?;
         Ok(())
     }
 
-    /// Delete a tool and its environment
+    /// Update the manifest for an existing tool
+    pub fn update_manifest(&self, name: &str, manifest: ToolManifest) -> Result<()> {
+        let tool_dir = self.storage_dir.join(name);
+        let manifest_path = tool_dir.join("manifest.json");
+
+        let mut updated = manifest;
+        updated.updated_at = Some(chrono_now());
+
+        let json = serde_json::to_string_pretty(&updated)?;
+        fs::write(manifest_path, json)?;
+
+        // Reload tool
+        if let Ok(config) = self.load_tool_from_dir(&tool_dir) {
+            let mut tools = self.tools.write().unwrap();
+            tools.insert(name.to_string(), config);
+        }
+
+        Ok(())
+    }
+
+    /// Delete a tool and its directory
     pub fn delete_tool(&self, name: &str) -> Result<bool> {
         let mut tools = self.tools.write().unwrap();
-        if let Some(tool) = tools.remove(name) {
-            // Clean up files
-            if tool.tool_type == ToolType::Wasm && tool.wasm_path.exists() {
-                let _ = fs::remove_file(&tool.wasm_path);
+        if tools.remove(name).is_some() {
+            let tool_dir = self.storage_dir.join(name);
+            if tool_dir.exists() {
+                fs::remove_dir_all(&tool_dir)?;
             }
-            if tool.tool_type == ToolType::Script && tool.script_path.exists() {
-                let _ = fs::remove_file(&tool.script_path);
-            }
-            if let Some(env_path) = tool.env_path {
-                if env_path.exists() {
-                    let _ = fs::remove_dir_all(&env_path);
-                }
-            }
-            drop(tools);
-            self.save_manifest()?;
             Ok(true)
         } else {
             Ok(false)

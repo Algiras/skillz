@@ -4,6 +4,91 @@ use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 
+/// A dependency for WASM tools
+#[derive(Debug, Clone)]
+pub struct WasmDependency {
+    pub name: String,
+    pub version: String,
+    /// Optional features to enable
+    pub features: Vec<String>,
+}
+
+impl WasmDependency {
+    pub fn new(name: &str, version: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            version: version.to_string(),
+            features: vec![],
+        }
+    }
+
+    pub fn with_features(mut self, features: Vec<String>) -> Self {
+        self.features = features;
+        self
+    }
+
+    /// Parse from string format: "name@version" or "name@version[feat1,feat2]"
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+
+        // Check for features: name@version[feat1,feat2]
+        let (main_part, features) = if let Some(bracket_start) = s.find('[') {
+            if let Some(bracket_end) = s.find(']') {
+                let features_str = &s[bracket_start + 1..bracket_end];
+                let features: Vec<String> = features_str
+                    .split(',')
+                    .map(|f| f.trim().to_string())
+                    .filter(|f| !f.is_empty())
+                    .collect();
+                (&s[..bracket_start], features)
+            } else {
+                (s, vec![])
+            }
+        } else {
+            (s, vec![])
+        };
+
+        // Parse name@version or just name
+        if let Some(at_pos) = main_part.find('@') {
+            let name = main_part[..at_pos].trim();
+            let version = main_part[at_pos + 1..].trim();
+            Some(Self {
+                name: name.to_string(),
+                version: version.to_string(),
+                features,
+            })
+        } else {
+            // Default to latest version
+            Some(Self {
+                name: main_part.to_string(),
+                version: "*".to_string(),
+                features,
+            })
+        }
+    }
+
+    /// Convert to Cargo.toml dependency line
+    pub fn to_toml_line(&self) -> String {
+        if self.features.is_empty() {
+            format!("{} = \"{}\"", self.name, self.version)
+        } else {
+            format!(
+                "{} = {{ version = \"{}\", features = [{}] }}",
+                self.name,
+                self.version,
+                self.features
+                    .iter()
+                    .map(|f| format!("\"{}\"", f))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    }
+}
+
 pub struct Builder;
 
 impl Builder {
@@ -18,9 +103,19 @@ impl Builder {
         "cargo".to_string()
     }
 
+    /// Compile a WASM tool with optional dependencies
     pub fn compile_tool(name: &str, code: &str) -> Result<PathBuf> {
+        Self::compile_tool_with_deps(name, code, &[])
+    }
+
+    /// Compile a WASM tool with dependencies
+    pub fn compile_tool_with_deps(
+        name: &str,
+        code: &str,
+        dependencies: &[WasmDependency],
+    ) -> Result<PathBuf> {
         let temp_dir = TempDir::new()?;
-        let package_name = name.replace(" ", "_").to_lowercase();
+        let package_name = name.replace([' ', '-'], "_").to_lowercase();
         let project_path = temp_dir.path().join(&package_name);
         let cargo = Self::get_cargo_path();
 
@@ -37,8 +132,28 @@ impl Builder {
             anyhow::bail!("Failed to create cargo project: {}", stderr);
         }
 
+        // Write source code
         let src_path = project_path.join("src/main.rs");
         fs::write(&src_path, code).context("Failed to write source code")?;
+
+        // If there are dependencies, update Cargo.toml
+        if !dependencies.is_empty() {
+            let cargo_toml_path = project_path.join("Cargo.toml");
+            let mut cargo_toml = fs::read_to_string(&cargo_toml_path)?;
+
+            // Add dependencies section if not present
+            if !cargo_toml.contains("[dependencies]") {
+                cargo_toml.push_str("\n[dependencies]\n");
+            }
+
+            // Add each dependency
+            for dep in dependencies {
+                cargo_toml.push_str(&dep.to_toml_line());
+                cargo_toml.push('\n');
+            }
+
+            fs::write(&cargo_toml_path, cargo_toml)?;
+        }
 
         // Build with full output capture
         let output = Command::new(&cargo)
@@ -64,16 +179,62 @@ impl Builder {
             anyhow::bail!("WASM artifact not found at {:?}", wasm_path);
         }
 
-        // Return the path to the temp file - wait, temp dir will be deleted.
-        // We need to copy it out.
-        // The caller should handle copying to permanent storage.
-        // For now, we return the path inside the temp dir, but we must ensure
-        // the temp dir persists or we copy it here.
-        // Let's copy to a temp file that persists.
-
+        // Copy to temp file that persists
         let output_path = std::env::temp_dir().join(format!("{}.wasm", package_name));
         fs::copy(&wasm_path, &output_path)?;
 
         Ok(output_path)
+    }
+
+    /// Parse dependency strings into WasmDependency objects
+    /// Format: "name@version" or "name@version[feat1,feat2]" or just "name"
+    pub fn parse_dependencies(deps: &[String]) -> Vec<WasmDependency> {
+        deps.iter()
+            .filter_map(|s| WasmDependency::parse(s))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_dependency_name_only() {
+        let dep = WasmDependency::parse("serde").unwrap();
+        assert_eq!(dep.name, "serde");
+        assert_eq!(dep.version, "*");
+        assert!(dep.features.is_empty());
+    }
+
+    #[test]
+    fn test_parse_dependency_with_version() {
+        let dep = WasmDependency::parse("serde@1.0").unwrap();
+        assert_eq!(dep.name, "serde");
+        assert_eq!(dep.version, "1.0");
+        assert!(dep.features.is_empty());
+    }
+
+    #[test]
+    fn test_parse_dependency_with_features() {
+        let dep = WasmDependency::parse("serde@1.0[derive,json]").unwrap();
+        assert_eq!(dep.name, "serde");
+        assert_eq!(dep.version, "1.0");
+        assert_eq!(dep.features, vec!["derive", "json"]);
+    }
+
+    #[test]
+    fn test_to_toml_line_simple() {
+        let dep = WasmDependency::new("serde", "1.0");
+        assert_eq!(dep.to_toml_line(), "serde = \"1.0\"");
+    }
+
+    #[test]
+    fn test_to_toml_line_with_features() {
+        let dep = WasmDependency::new("serde", "1.0").with_features(vec!["derive".to_string()]);
+        assert_eq!(
+            dep.to_toml_line(),
+            "serde = { version = \"1.0\", features = [\"derive\"] }"
+        );
     }
 }

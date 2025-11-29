@@ -281,6 +281,7 @@ pub struct ClientCapabilities {
 #[derive(Debug, Clone, Serialize)]
 pub struct ExecutionContext {
     /// Workspace roots (directories the tool can operate on)
+    /// Priority: MCP roots > SKILLZ_ROOTS env > cwd
     pub roots: Vec<String>,
     /// Current working directory
     pub working_directory: String,
@@ -303,6 +304,17 @@ impl Default for ExecutionContext {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
         let tools_dir = std::env::var("TOOLS_DIR").unwrap_or_else(|_| format!("{}/tools", home));
 
+        // Get roots from environment variable if set, otherwise use cwd
+        // Format: SKILLZ_ROOTS=/path/one:/path/two (colon-separated)
+        let roots = match std::env::var("SKILLZ_ROOTS") {
+            Ok(roots_str) if !roots_str.is_empty() => roots_str
+                .split(':')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+            _ => vec![cwd.clone()],
+        };
+
         // Safe environment variables to pass
         let mut env = std::collections::HashMap::new();
         for key in ["HOME", "USER", "LANG", "PATH", "TERM"] {
@@ -312,13 +324,29 @@ impl Default for ExecutionContext {
         }
 
         Self {
-            roots: vec![cwd.clone()],
+            roots,
             working_directory: cwd,
             tool_name: String::new(),
             environment: env,
             tools_dir,
             capabilities: ClientCapabilities::default(),
         }
+    }
+}
+
+impl ExecutionContext {
+    /// Update roots from MCP client (takes priority over env/defaults)
+    pub fn with_roots(mut self, roots: Vec<String>) -> Self {
+        if !roots.is_empty() {
+            self.roots = roots;
+        }
+        self
+    }
+
+    /// Update capabilities from MCP client
+    pub fn with_capabilities(mut self, capabilities: ClientCapabilities) -> Self {
+        self.capabilities = capabilities;
+        self
     }
 }
 
@@ -432,7 +460,7 @@ impl ToolRuntime {
 
     /// Execute a tool based on its type
     pub fn call_tool(&self, config: &ToolConfig, args: Value) -> Result<Value> {
-        match config.tool_type {
+        match config.tool_type() {
             ToolType::Wasm => self.call_wasm_tool(&config.wasm_path, args),
             ToolType::Script => {
                 let result = self.call_script_tool(config, args)?;
@@ -481,7 +509,7 @@ impl ToolRuntime {
     fn call_script_tool(&self, config: &ToolConfig, args: Value) -> Result<ScriptResult> {
         // Build execution context
         let mut context = self.context.clone();
-        context.tool_name = config.name.clone();
+        context.tool_name = config.name().to_string();
 
         // Save roots for sandbox (before context is moved)
         let sandbox_roots = context.roots.clone();
@@ -501,26 +529,27 @@ impl ToolRuntime {
         eprintln!("Script request: {}", request_json);
 
         // Determine how to run the script (with virtual environment if configured)
-        let mut cmd = if let Some(ref interpreter) = config.interpreter {
+        let interpreter = config.interpreter();
+        let mut cmd = if let Some(interp) = interpreter {
             // Check if we have a virtual environment
             if let Some(ref env_path) = config.env_path {
-                let interpreter_in_env = match interpreter.as_str() {
+                let interpreter_in_env = match interp {
                     "python3" | "python" => {
                         let venv_python = env_path.join("bin").join("python");
                         if venv_python.exists() {
                             venv_python.to_string_lossy().to_string()
                         } else {
-                            interpreter.clone()
+                            interp.to_string()
                         }
                     }
-                    "node" | "nodejs" => interpreter.clone(), // Node uses NODE_PATH
-                    _ => interpreter.clone(),
+                    "node" | "nodejs" => interp.to_string(), // Node uses NODE_PATH
+                    _ => interp.to_string(),
                 };
                 let mut c = Command::new(&interpreter_in_env);
                 c.arg(&config.script_path);
 
                 // For Node.js, set NODE_PATH to include local node_modules
-                if interpreter == "node" || interpreter == "nodejs" {
+                if interp == "node" || interp == "nodejs" {
                     let node_modules = env_path.join("node_modules");
                     if node_modules.exists() {
                         c.env("NODE_PATH", node_modules);
@@ -528,7 +557,7 @@ impl ToolRuntime {
                 }
                 c
             } else {
-                let mut c = Command::new(interpreter);
+                let mut c = Command::new(interp);
                 c.arg(&config.script_path);
                 c
             }

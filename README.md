@@ -13,16 +13,14 @@
 [Install](#-installation) •
 [Configure](#-editor-configuration) •
 [Features](#-features) •
-[Documentation](#-documentation) •
-[Examples](#-examples)
+[Examples](#-quick-examples) •
+[Script Guide](#-writing-script-tools)
 
 </div>
 
 ---
 
 ## ⚡ Installation
-
-### Using Cargo (Recommended)
 
 ```bash
 # Install WASM target (required for building tools)
@@ -31,23 +29,6 @@ rustup target add wasm32-wasip1
 # Install Skillz
 cargo install skillz
 ```
-
-That's it! The `skillz` binary is now available in your PATH.
-
-### From Source
-
-```bash
-git clone https://github.com/Algiras/skillz.git
-cd skillz
-cargo install --path .
-```
-
-### Pre-built Binaries
-
-Download from [GitHub Releases](https://github.com/Algiras/skillz/releases):
-- `skillz-linux-x86_64.tar.gz` - Linux (x86_64)
-- `skillz-macos-x86_64.tar.gz` - macOS (Intel)
-- `skillz-macos-aarch64.tar.gz` - macOS (Apple Silicon)
 
 ---
 
@@ -61,16 +42,11 @@ Add to `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "skillz": {
-      "command": "skillz",
-      "env": {
-        "TOOLS_DIR": "~/.skillz/tools"
-      }
+      "command": "skillz"
     }
   }
 }
 ```
-
-Restart Cursor or run **Developer: Reload Window**.
 
 ### Claude Desktop
 
@@ -84,230 +60,372 @@ Restart Cursor or run **Developer: Reload Window**.
 {
   "mcpServers": {
     "skillz": {
-      "command": "skillz",
-      "env": {
-        "TOOLS_DIR": "~/.skillz/tools"
-      }
+      "command": "skillz"
     }
   }
 }
 ```
 
-### VS Code / Continue
-
-Add to your MCP settings:
-
-```json
-{
-  "mcpServers": {
-    "skillz": {
-      "command": "skillz",
-      "env": {
-        "TOOLS_DIR": "~/.skillz/tools"
-      }
-    }
-  }
-}
-```
-
-### Other Editors (Windsurf, Zed, etc.)
-
-Most MCP-compatible editors use the same JSON format. Just add `skillz` to your MCP servers configuration.
-
-> **Note**: If `skillz` isn't in your PATH, use the full path: `~/.cargo/bin/skillz`
+> **Note**: If `skillz` isn't in your PATH, use: `~/.cargo/bin/skillz`
 
 ---
 
-## 🎯 What is Skillz?
-
-Skillz is a **Model Context Protocol (MCP) server** that allows AI assistants to dynamically create and execute custom tools at runtime.
-
-### Key Capabilities
+## 🎯 Features
 
 | Feature | Description |
 |---------|-------------|
-| 🦀 **WASM Tools** | Compile Rust code to WebAssembly on-the-fly |
-| 📜 **Script Tools** | Register tools in Python, Node.js, Ruby, Bash, etc. |
-| 🔧 **Step-by-Step Creation** | Guided workflow: Design → Implement → Test → Finalize |
-| 📡 **JSON-RPC 2.0** | Full protocol support for script communication |
-| 🔒 **Sandbox Execution** | Tools run in isolated WebAssembly environment |
-| 💾 **Persistence** | Tools persist across server restarts |
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    AI Assistant (Claude, etc.)               │
-└───────────────────────────┬─────────────────────────────────┘
-                            │ MCP Protocol
-┌───────────────────────────▼─────────────────────────────────┐
-│                     Skillz MCP Server                        │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐ │
-│  │   WASM Tools    │  │  Script Tools   │  │  Sequential  │ │
-│  │  (Rust → WASM)  │  │ (Any Language)  │  │   Creation   │ │
-│  └─────────────────┘  └─────────────────┘  └──────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-```
+| 🦀 **WASM Tools** | Compile Rust → WebAssembly at runtime |
+| 📦 **Rust Crates** | Add serde, regex, anyhow, etc. to WASM tools! |
+| 📜 **Script Tools** | Python, Node.js, Ruby, Bash, or any language |
+| 🏷️ **Tool Annotations** | Hints for clients (readOnly, destructive, idempotent) |
+| 🔍 **Completion API** | Autocomplete for tool arguments |
+| ⚡ **Code Execution** | Compose multiple tools via code (98% token savings!) |
+| 📦 **Dependencies** | Auto-install pip/npm/cargo packages per tool |
+| 💾 **Persistence** | Tools survive server restarts |
+| 🔒 **Sandbox** | Optional bubblewrap/firejail/nsjail isolation |
+| 📂 **Shareable** | Each tool has its own directory with manifest.json |
 
 ---
 
-## ✨ Features
-
-### 🦀 WASM Tools (Rust)
-
-Compile Rust code to WebAssembly at runtime:
-
-```rust
-fn main() {
-    println!("Hello from WASM!");
-}
-```
-
-### 📜 Script Tools (Any Language)
-
-Register tools in any language with JSON-RPC 2.0:
-
-```python
-#!/usr/bin/env python3
-import json, sys
-
-request = json.loads(sys.stdin.read())
-result = {"message": "Hello from Python!"}
-print(json.dumps({"jsonrpc": "2.0", "result": result, "id": request["id"]}))
-```
-
-### 🔧 Sequential Skill Creation
-
-Build complex tools step-by-step:
-
-```
-Step 1: Design    → Define inputs, outputs, behavior
-Step 2: Implement → Write the code
-Step 3: Test      → Validate compilation/execution
-Step 4: Finalize  → Register and use
-```
-
----
-
-## 📖 Documentation
-
-### Available Tools
+## 📖 Available Tools
 
 | Tool | Description |
 |------|-------------|
 | `build_tool` | Compile Rust code → WASM tool |
-| `register_script` | Register script tool with optional dependencies |
-| `create_skill` | Step-by-step skill creation |
-| `call_tool` | Execute a registered tool |
+| `register_script` | Register script with optional deps & annotations |
+| `create_skill` | Step-by-step guided creation |
+| `call_tool` | Execute any registered tool |
 | `list_tools` | List all available tools |
-| `install_deps` | Install dependencies for script tools |
-| `delete_tool` | Delete a tool and clean up files |
+| `complete` | Get autocomplete suggestions for arguments |
+| `execute_code` | Run code that composes multiple tools |
+| `install_deps` | Install dependencies for a tool |
+| `delete_tool` | Remove a tool and clean up |
 | `test_validate` | Validate Rust code before building |
-
-### Resources
-
-| URI | Description |
-|-----|-------------|
-| `skillz://guide` | Usage guide (auto-updates with new tools) |
-| `skillz://examples` | Code examples for all languages |
-| `skillz://protocol` | JSON-RPC 2.0 protocol docs |
-| `skillz://tools/{name}` | Individual tool documentation |
 
 ---
 
 ## 💡 Quick Examples
 
-### Create a WASM Tool
+### Build a WASM Tool (Rust)
 
 ```
 build_tool(
   name: "fibonacci",
-  code: "fn main() { let (mut a, mut b) = (0u64, 1); for _ in 0..20 { print!(\"{} \", a); (a, b) = (b, a + b); } }",
-  description: "Generates Fibonacci numbers"
+  description: "Generates Fibonacci numbers",
+  code: "fn main() { 
+    let (mut a, mut b) = (0u64, 1); 
+    for _ in 0..20 { print!(\"{} \", a); (a, b) = (b, a + b); } 
+  }",
+  annotations: {"readOnlyHint": true}
 )
 ```
 
-### Create a Python Tool
+### WASM Tool with Rust Dependencies
+
+```
+build_tool(
+  name: "json_processor",
+  description: "Process JSON with serde",
+  dependencies: ["serde@1.0[derive]", "serde_json@1.0"],
+  code: """
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Data { name: String, value: i32 }
+
+fn main() {
+    let data = Data { name: "test".to_string(), value: 42 };
+    println!("{}", serde_json::to_string(&data).unwrap());
+}
+"""
+)
+```
+
+### Register a Script Tool (Python)
 
 ```
 register_script(
-  name: "word_count",
-  interpreter: "python3",
+  name: "word_counter",
   description: "Counts words in text",
-  code: "#!/usr/bin/env python3
+  interpreter: "python3",
+  input_schema: {
+    "type": "object",
+    "properties": {"text": {"type": "string"}},
+    "required": ["text"]
+  },
+  output_schema: {
+    "type": "object",
+    "properties": {"count": {"type": "integer"}}
+  },
+  annotations: {"readOnlyHint": true},
+  code: """#!/usr/bin/env python3
 import json, sys
-req = json.loads(sys.stdin.read())
-text = req['params']['arguments'].get('text', '')
-print(json.dumps({'jsonrpc': '2.0', 'result': {'words': len(text.split())}, 'id': req['id']}))"
+
+request = json.loads(sys.stdin.readline())
+text = request['params']['arguments'].get('text', '')
+result = {'count': len(text.split())}
+print(json.dumps({'jsonrpc': '2.0', 'result': result, 'id': request['id']}))
+"""
 )
 ```
 
-### Create a Tool with Dependencies
+### Tool with Dependencies
 
 ```
 register_script(
-  name: "http_client",
+  name: "data_analyzer",
   interpreter: "python3",
-  description: "Makes HTTP requests",
-  dependencies: ["requests", "urllib3"],
+  dependencies: ["pandas", "numpy"],
   code: "..."
 )
 ```
 
-Dependencies are automatically installed in an isolated virtual environment (Python) or node_modules (Node.js).
-
-### Install Dependencies Later
+### Execute Multiple Tools via Code
 
 ```
-install_deps(tool_name: "my_tool", dependencies: ["pandas", "numpy"])
+execute_code(
+  language: "python",
+  code: """
+# All registered tools are available as functions!
+fib = fibonacci()
+primes = prime_finder()
+
+# Combine results with custom logic
+print(f"Fibonacci: {fib}")
+print(f"Primes: {primes}")
+
+# Loops, conditionals, anything you need
+for i in range(3):
+    result = my_calculator(a=i, b=10)
+    print(result)
+"""
+)
 ```
 
-### Execute Tools
+This pattern reduces token usage by **98%** (150k → 2k tokens)!
+
+---
+
+## 📝 Writing Script Tools
+
+### JSON-RPC 2.0 Protocol
+
+Scripts communicate via JSON-RPC 2.0 over stdin/stdout:
+
+<div align="center">
+  <img src="docs/architecture.png" alt="Skillz Architecture Diagram" width="800">
+</div>
+
+### ⚠️ Important: Use `readline()` not `read()`
+
+```python
+# ✅ CORRECT - Returns immediately after reading the request
+request = json.loads(sys.stdin.readline())
+
+# ❌ WRONG - Blocks waiting for EOF, causes timeout!
+request = json.loads(sys.stdin.read())
+```
+
+### Python Template
+
+```python
+#!/usr/bin/env python3
+import json
+import sys
+
+def main():
+    # Read JSON-RPC request (use readline!)
+    request = json.loads(sys.stdin.readline())
+    
+    # Extract arguments
+    args = request.get('params', {}).get('arguments', {})
+    context = request.get('params', {}).get('context', {})
+    
+    # Your logic here
+    result = {"message": "Hello!", "input": args}
+    
+    # Return JSON-RPC response
+    response = {
+        "jsonrpc": "2.0",
+        "result": result,
+        "id": request.get("id")
+    }
+    print(json.dumps(response))
+    sys.stdout.flush()
+
+if __name__ == "__main__":
+    main()
+```
+
+### Node.js Template
+
+```javascript
+#!/usr/bin/env node
+const readline = require('readline');
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
+});
+
+rl.on('line', (line) => {
+  const request = JSON.parse(line);
+  const args = request.params?.arguments || {};
+  
+  // Your logic here
+  const result = { message: "Hello from Node!", input: args };
+  
+  console.log(JSON.stringify({
+    jsonrpc: "2.0",
+    result: result,
+    id: request.id
+  }));
+  
+  process.exit(0);
+});
+```
+
+### Execution Context
+
+Scripts receive context information:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "execute",
+  "params": {
+    "arguments": { "your": "args" },
+    "context": {
+      "roots": ["/path/to/workspace"],
+      "working_directory": "/current/dir",
+      "tool_name": "my_tool",
+      "tools_dir": "~/.skillz/tools",
+      "capabilities": {
+        "sampling": false,
+        "elicitation": false
+      }
+    }
+  },
+  "id": 1
+}
+```
+
+---
+
+## 🏷️ Tool Annotations
+
+Annotations help clients understand tool behavior:
+
+```json
+{
+  "title": "File Reader",
+  "readOnlyHint": true,
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "openWorldHint": false
+}
+```
+
+| Annotation | Meaning |
+|------------|---------|
+| `title` | Human-readable display name |
+| `readOnlyHint` | Tool only reads, doesn't modify state |
+| `destructiveHint` | Tool may delete or overwrite data |
+| `idempotentHint` | Safe to retry with same arguments |
+| `openWorldHint` | Interacts with external systems (network, APIs) |
+
+---
+
+## 📂 Tool Directory Structure
+
+Each tool is stored in its own directory with a shareable `manifest.json`:
 
 ```
-call_tool(tool_name: "fibonacci")
-call_tool(tool_name: "word_count", arguments: {"text": "Hello world!"})
+~/tools/
+├── fibonacci/
+│   ├── manifest.json     # Tool metadata
+│   ├── fibonacci.wasm    # Compiled binary
+│   └── src.rs            # Source code (for recompilation)
+├── word_counter/
+│   ├── manifest.json
+│   └── word_counter.py
+└── http_client/
+    ├── manifest.json
+    ├── http_client.py
+    └── env/              # Virtual environment
 ```
+
+### manifest.json Example
+
+```json
+{
+  "name": "json_processor",
+  "version": "1.0.0",
+  "description": "Process JSON with serde",
+  "tool_type": "wasm",
+  "wasm_dependencies": ["serde@1.0[derive]", "serde_json@1.0"],
+  "author": "Your Name",
+  "license": "MIT",
+  "tags": ["json", "utility"]
+}
+```
+
+Tools are **shareable** - just copy the directory!
+
+---
+
+## 🔧 Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `TOOLS_DIR` | Where tools are stored | `~/.skillz/tools` |
+| `SKILLZ_ROOTS` | Workspace roots (colon-separated) | `/home/user/project:/data` |
+| `SKILLZ_SANDBOX` | Sandbox mode | `bubblewrap`, `firejail`, `nsjail` |
+| `SKILLZ_SANDBOX_NETWORK` | Allow network in sandbox | `1` |
+
+**Root Priority:** MCP client roots > `SKILLZ_ROOTS` env > cwd
 
 ---
 
 ## 🔒 Security
 
-- **WASM Sandbox**: Tools run in isolated Wasmtime environment
-- **Memory Safety**: Rust guarantees extend to compiled tools
-- **Process Isolation**: Scripts run as separate processes
-- **Filtered Environment**: Only safe env vars passed to scripts
+### Sandbox Modes (Linux)
 
-See [SECURITY.md](SECURITY.md) for details.
+Enable sandboxing via environment variable:
+
+```bash
+# Bubblewrap (namespace isolation)
+export SKILLZ_SANDBOX=bubblewrap
+
+# Firejail (seccomp + namespaces)
+export SKILLZ_SANDBOX=firejail
+
+# nsjail (most restrictive)
+export SKILLZ_SANDBOX=nsjail
+
+# Allow network in sandbox
+export SKILLZ_SANDBOX_NETWORK=1
+```
+
+See [SECURITY.md](SECURITY.md) for full details.
 
 ---
 
 ## 🛠️ Development
 
 ```bash
-# Clone
 git clone https://github.com/Algiras/skillz.git
 cd skillz
-
-# Build
 cargo build --release
-
-# Test
 cargo test
-
-# Install locally
-cargo install --path .
 ```
 
 ---
 
 ## 🤝 Contributing
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push (`git push origin feature/amazing`)
-5. Open Pull Request
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
 
@@ -320,9 +438,9 @@ MIT License - see [LICENSE](LICENSE)
 ## 🔗 Links
 
 - **Crates.io**: [crates.io/crates/skillz](https://crates.io/crates/skillz)
-- **Documentation**: [algiras.github.io/skillz](https://algiras.github.io/skillz)
+- **Docs**: [algiras.github.io/skillz](https://algiras.github.io/skillz)
 - **GitHub**: [github.com/Algiras/skillz](https://github.com/Algiras/skillz)
-- **MCP Protocol**: [modelcontextprotocol.io](https://modelcontextprotocol.io)
+- **MCP Spec**: [modelcontextprotocol.io](https://modelcontextprotocol.io)
 
 ---
 

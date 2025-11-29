@@ -91,6 +91,45 @@ skillz/
 └── .github/          # CI/CD workflows
 ```
 
+## 📜 Script Tool Best Practices
+
+When writing script tools, follow these critical guidelines:
+
+### ⚠️ Use `readline()` NOT `read()`
+
+```python
+# ✅ CORRECT - Returns immediately after reading request
+request = json.loads(sys.stdin.readline())
+
+# ❌ WRONG - Blocks forever waiting for EOF!
+request = json.loads(sys.stdin.read())
+```
+
+### Always Flush Output
+
+```python
+print(json.dumps(response))
+sys.stdout.flush()  # Important!
+```
+
+### Extract Arguments Correctly
+
+```python
+request = json.loads(sys.stdin.readline())
+args = request.get('params', {}).get('arguments', {})
+context = request.get('params', {}).get('context', {})
+```
+
+### Use Proper JSON-RPC Response Format
+
+```python
+response = {
+    "jsonrpc": "2.0",
+    "result": {"your": "data"},
+    "id": request.get("id")  # Include request ID!
+}
+```
+
 ## 🎯 Areas for Contribution
 
 ### High Priority
@@ -99,13 +138,22 @@ skillz/
 - [ ] Improved error messages
 - [ ] Performance optimizations
 - [ ] More comprehensive tests
+- [ ] Tool result streaming (large outputs)
+- [ ] HTTP transport with SSE
 
-### Features
+### Completed Features ✅
+
+- [x] Tool dependencies (pip/npm)
+- [x] Input/output schemas
+- [x] Tool annotations
+- [x] Completion API
+- [x] Code execution mode
+
+### Future Features
 
 - [ ] Tool versioning
-- [ ] Tool dependencies
-- [ ] Input/output schemas
 - [ ] Tool marketplace
+- [ ] Better sandbox isolation (gVisor, Firecracker)
 
 ### Documentation
 

@@ -40,6 +40,10 @@ struct BuildToolArgs {
     /// Tool annotations - hints about behavior
     /// Example: {"readOnlyHint": true} or {"destructiveHint": true, "openWorldHint": true}
     annotations: Option<serde_json::Value>,
+    /// Rust crate dependencies for WASM tools
+    /// Format: "name@version" or "name@version[feat1,feat2]" or just "name"
+    /// Example: ["serde@1.0[derive]", "regex@1.10", "anyhow"]
+    dependencies: Option<Vec<String>>,
     /// Allow overwriting existing tools
     overwrite: Option<bool>,
 }
@@ -51,7 +55,9 @@ struct RegisterScriptArgs {
     name: String,
     /// Description of what the tool does
     description: String,
-    /// The script code (will be saved to a file)
+    /// The script code. CRITICAL for Python: Use sys.stdin.readline() NOT sys.stdin.read()!
+    /// read() blocks forever waiting for EOF. Always flush output with sys.stdout.flush().
+    /// Template: request = json.loads(sys.stdin.readline()); ... print(json.dumps({...})); sys.stdout.flush()
     code: String,
     /// Language/interpreter to use (python3, node, ruby, bash, etc.)
     /// If not provided, the script must be executable
@@ -102,13 +108,6 @@ struct CallToolArgs {
 struct TestValidateArgs {
     code: String,
     test_compile: Option<bool>,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-struct AddRootArgs {
-    /// Path to add as a workspace root (scripts will have access to this directory)
-    path: String,
 }
 
 /// Sequential skill creation - build tools step by step
@@ -175,7 +174,7 @@ impl AppState {
     // ==================== WASM TOOLS (Rust) ====================
 
     #[tool(
-        description = "Compile and register a new WASM tool from Rust code. Set overwrite=true to update existing tools."
+        description = "Compile and register a new WASM tool from Rust code. Supports Rust crate dependencies! Set overwrite=true to update existing tools."
     )]
     async fn build_tool(&self, Parameters(args): Parameters<BuildToolArgs>) -> String {
         eprintln!("Building WASM tool: {}", args.name);
@@ -188,52 +187,66 @@ impl AppState {
             );
         }
 
-        let wasm_path = match builder::Builder::compile_tool(&args.name, &args.code) {
-            Ok(path) => path,
+        // Parse dependencies
+        let deps = args.dependencies.clone().unwrap_or_default();
+        let wasm_deps = builder::Builder::parse_dependencies(&deps);
+
+        // Compile with dependencies
+        let wasm_bytes = match builder::Builder::compile_tool_with_deps(
+            &args.name,
+            &args.code,
+            &wasm_deps,
+        ) {
+            Ok(path) => match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(e) => return format!("Error reading compiled WASM: {}", e),
+            },
             Err(e) => return format!("Compilation error: {}", e),
         };
 
-        let dest = self
-            .registry
-            .storage_dir()
-            .join(format!("{}.wasm", args.name));
-        if let Err(e) = std::fs::copy(&wasm_path, &dest) {
-            return format!("File copy error: {}", e);
-        }
+        // Build manifest
+        let mut manifest = registry::ToolManifest::new(
+            args.name.clone(),
+            args.description.clone(),
+            ToolType::Wasm,
+        );
+        manifest.input_schema = args
+            .input_schema
+            .map(registry::ToolSchema::from_value)
+            .unwrap_or_default();
+        manifest.output_schema = args.output_schema.map(registry::ToolSchema::from_value);
+        manifest.annotations = args.annotations.map(registry::ToolAnnotations::from_value);
+        manifest.wasm_dependencies = deps.clone();
 
-        // Build schemas and annotations from provided values
-        let input_schema = args.input_schema.map(registry::ToolSchema::from_value);
-        let output_schema = args.output_schema.map(registry::ToolSchema::from_value);
-        let annotations = args.annotations.map(registry::ToolAnnotations::from_value);
-
-        if let Err(e) = self.registry.register_tool(registry::ToolConfig {
-            name: args.name.clone(),
-            description: args.description.clone(),
-            tool_type: ToolType::Wasm,
-            wasm_path: dest,
-            script_path: std::path::PathBuf::new(),
-            interpreter: None,
-            input_schema: input_schema.unwrap_or_default(),
-            output_schema,
-            annotations,
-            dependencies: vec![],
-            env_path: None,
-            deps_installed: false,
-        }) {
-            return format!("Registration error: {}", e);
-        }
-
-        if args.overwrite.unwrap_or(false) {
-            format!("🦀 WASM Tool '{}' updated successfully", args.name)
-        } else {
-            format!("🦀 WASM Tool '{}' built and registered", args.name)
+        // Also save the source code so the tool can be recompiled
+        match self.registry.register_wasm_tool(manifest, &wasm_bytes, &args.code) {
+            Ok(config) => {
+                let tool_dir = config.tool_dir.display();
+                let deps_msg = if deps.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n📦 Dependencies: {:?}", deps)
+                };
+                if args.overwrite.unwrap_or(false) {
+                    format!(
+                        "🦀 WASM Tool '{}' updated successfully\n\nDirectory: {}{}",
+                        args.name, tool_dir, deps_msg
+                    )
+                } else {
+                    format!(
+                        "🦀 WASM Tool '{}' built and registered\n\nDirectory: {}{}",
+                        args.name, tool_dir, deps_msg
+                    )
+                }
+            }
+            Err(e) => format!("Registration error: {}", e),
         }
     }
 
     // ==================== SCRIPT TOOLS (Any Language) ====================
 
     #[tool(
-        description = "Register a script tool in any language (Python, Node.js, Ruby, Bash, etc.). Scripts communicate via JSON-RPC 2.0 over stdin/stdout."
+        description = "Register a script tool in any language (Python, Node.js, Ruby, Bash, etc.). Scripts communicate via JSON-RPC 2.0 over stdin/stdout. CRITICAL: Use sys.stdin.readline() NOT sys.stdin.read() in Python scripts - read() blocks forever! Always call sys.stdout.flush() after printing the response."
     )]
     async fn register_script(&self, Parameters(args): Parameters<RegisterScriptArgs>) -> String {
         eprintln!("Registering script tool: {}", args.name);
@@ -246,64 +259,44 @@ impl AppState {
             );
         }
 
-        // Determine file extension
-        let ext = args
-            .extension
-            .clone()
-            .unwrap_or_else(|| match args.interpreter.as_deref() {
-                Some("python3") | Some("python") => "py".to_string(),
-                Some("node") | Some("nodejs") => "js".to_string(),
-                Some("ruby") => "rb".to_string(),
-                Some("bash") | Some("sh") => "sh".to_string(),
-                Some("perl") => "pl".to_string(),
-                Some("php") => "php".to_string(),
-                _ => "script".to_string(),
-            });
+        // Build manifest
+        let mut manifest = registry::ToolManifest::new(
+            args.name.clone(),
+            args.description.clone(),
+            ToolType::Script,
+        );
+        manifest.interpreter = args.interpreter.clone();
+        manifest.input_schema = args
+            .input_schema
+            .map(registry::ToolSchema::from_value)
+            .unwrap_or_default();
+        manifest.output_schema = args.output_schema.map(registry::ToolSchema::from_value);
+        manifest.annotations = args.annotations.map(registry::ToolAnnotations::from_value);
+        manifest.dependencies = args.dependencies.clone().unwrap_or_default();
 
-        // Save the script
-        let script_path = self
-            .registry
-            .scripts_dir()
-            .join(format!("{}.{}", args.name, ext));
-        if let Err(e) = std::fs::write(&script_path, &args.code) {
-            return format!("Error saving script: {}", e);
-        }
-
-        // Make script executable (Unix)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(metadata) = std::fs::metadata(&script_path) {
-                let mut perms = metadata.permissions();
-                perms.set_mode(0o755);
-                let _ = std::fs::set_permissions(&script_path, perms);
-            }
-        }
+        // Register the tool (this creates the directory and saves the script)
+        let config = match self.registry.register_tool(manifest, args.code.as_bytes()) {
+            Ok(c) => c,
+            Err(e) => return format!("Registration error: {}", e),
+        };
 
         // Handle dependencies
-        let dependencies = args.dependencies.clone().unwrap_or_default();
-        let mut env_path: Option<std::path::PathBuf> = None;
-        let mut deps_installed = false;
         let mut deps_message = String::new();
-
-        if !dependencies.is_empty() {
-            let tool_env_path = self
-                .registry
-                .tool_env_path(&args.name, args.interpreter.as_deref());
-
-            // Create envs directory
-            let _ = std::fs::create_dir_all(self.registry.envs_dir());
+        if !config.manifest.dependencies.is_empty() {
+            let tool_env_path = self.registry.tool_env_path(&args.name);
 
             match runtime::install_tool_deps(
                 &tool_env_path,
                 args.interpreter.as_deref(),
-                &dependencies,
+                &config.manifest.dependencies,
             ) {
                 Ok(result) => {
                     if result.success {
-                        env_path = result.env_path;
-                        deps_installed = true;
-                        deps_message = format!("\n\n📦 Dependencies installed: {:?}", dependencies);
+                        let _ = self.registry.mark_deps_installed(&args.name);
+                        deps_message = format!(
+                            "\n\n📦 Dependencies installed: {:?}",
+                            config.manifest.dependencies
+                        );
                     } else {
                         deps_message =
                             format!("\n\n⚠️ Dependency install failed: {}", result.message);
@@ -315,49 +308,21 @@ impl AppState {
             }
         }
 
-        // Build schemas and annotations from provided values
-        let input_schema = args.input_schema.map(registry::ToolSchema::from_value);
-        let output_schema = args.output_schema.map(registry::ToolSchema::from_value);
-        let annotations = args.annotations.map(registry::ToolAnnotations::from_value);
-
-        // Register the tool
-        if let Err(e) = self.registry.register_tool(registry::ToolConfig {
-            name: args.name.clone(),
-            description: args.description.clone(),
-            tool_type: ToolType::Script,
-            wasm_path: std::path::PathBuf::new(),
-            script_path: script_path.clone(),
-            interpreter: args.interpreter.clone(),
-            input_schema: input_schema.unwrap_or_default(),
-            output_schema,
-            annotations,
-            dependencies,
-            env_path,
-            deps_installed,
-        }) {
-            return format!("Registration error: {}", e);
-        }
-
         let interpreter_info = args
             .interpreter
             .map(|i| format!(" (via {})", i))
             .unwrap_or_default();
 
+        let tool_dir = config.tool_dir.display();
         if args.overwrite.unwrap_or(false) {
             format!(
-                "📜 Script Tool '{}'{} updated successfully\n\nPath: {}{}",
-                args.name,
-                interpreter_info,
-                script_path.display(),
-                deps_message
+                "📜 Script Tool '{}'{} updated successfully\n\nDirectory: {}{}",
+                args.name, interpreter_info, tool_dir, deps_message
             )
         } else {
             format!(
-                "📜 Script Tool '{}'{} registered\n\nPath: {}{}",
-                args.name,
-                interpreter_info,
-                script_path.display(),
-                deps_message
+                "📜 Script Tool '{}'{} registered\n\nDirectory: {}{}",
+                args.name, interpreter_info, tool_dir, deps_message
             )
         }
     }
@@ -375,30 +340,25 @@ impl AppState {
             None => return format!("Error: Tool '{}' not found", args.tool_name),
         };
 
-        if tool.tool_type != ToolType::Script {
+        if *tool.tool_type() != ToolType::Script {
             return "Error: Dependency installation only supported for script tools".to_string();
         }
 
         let deps = args
             .dependencies
-            .unwrap_or_else(|| tool.dependencies.clone());
+            .unwrap_or_else(|| tool.dependencies().to_vec());
 
         if deps.is_empty() {
             return "No dependencies to install".to_string();
         }
 
-        let env_path = self
-            .registry
-            .tool_env_path(&args.tool_name, tool.interpreter.as_deref());
+        let env_path = self.registry.tool_env_path(&args.tool_name);
 
-        // Create envs directory
-        let _ = std::fs::create_dir_all(self.registry.envs_dir());
-
-        match runtime::install_tool_deps(&env_path, tool.interpreter.as_deref(), &deps) {
+        match runtime::install_tool_deps(&env_path, tool.interpreter(), &deps) {
             Ok(result) => {
                 if result.success {
                     // Update tool config
-                    if let Err(e) = self.registry.mark_deps_installed(&args.tool_name, env_path) {
+                    if let Err(e) = self.registry.mark_deps_installed(&args.tool_name) {
                         return format!("Deps installed but failed to update config: {}", e);
                     }
                     format!(
@@ -459,11 +419,11 @@ impl AppState {
 
         let wasm_tools: Vec<_> = tools
             .iter()
-            .filter(|t| t.tool_type == ToolType::Wasm)
+            .filter(|t| *t.tool_type() == ToolType::Wasm)
             .collect();
         let script_tools: Vec<_> = tools
             .iter()
-            .filter(|t| t.tool_type == ToolType::Script)
+            .filter(|t| *t.tool_type() == ToolType::Script)
             .collect();
 
         let mut output = format!("📦 Available Tools ({} total)\n\n", tools.len());
@@ -471,7 +431,7 @@ impl AppState {
         if !wasm_tools.is_empty() {
             output.push_str(&format!("### 🦀 WASM Tools ({})\n\n", wasm_tools.len()));
             for tool in wasm_tools {
-                output.push_str(&format!("• **{}** - {}\n", tool.name, tool.description));
+                output.push_str(&format!("• **{}** - {}\n", tool.name(), tool.description()));
             }
             output.push('\n');
         }
@@ -479,10 +439,10 @@ impl AppState {
         if !script_tools.is_empty() {
             output.push_str(&format!("### 📜 Script Tools ({})\n\n", script_tools.len()));
             for tool in script_tools {
-                let interpreter = tool.interpreter.as_deref().unwrap_or("executable");
+                let interpreter = tool.interpreter().unwrap_or("executable");
                 output.push_str(&format!(
                     "• **{}** [{}] - {}\n",
-                    tool.name, interpreter, tool.description
+                    tool.name(), interpreter, tool.description()
                 ));
             }
             output.push('\n');
@@ -558,48 +518,6 @@ impl AppState {
         report
     }
 
-    // ==================== ROOT MANAGEMENT ====================
-
-    #[tool(
-        description = "Add a workspace root. Scripts will have access to files in these directories."
-    )]
-    async fn add_root(&self, Parameters(args): Parameters<AddRootArgs>) -> String {
-        let path = std::path::Path::new(&args.path);
-        if !path.exists() {
-            return format!(
-                "Warning: Path '{}' does not exist, but added anyway.",
-                args.path
-            );
-        }
-
-        let canonical = path
-            .canonicalize()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| args.path.clone());
-
-        // Note: In a real implementation, we'd need interior mutability (Arc<RwLock<>>)
-        // For now, we just acknowledge the root
-        format!(
-            "📁 Root added: {}\n\nScript tools will receive this path in their execution context.",
-            canonical
-        )
-    }
-
-    #[tool(description = "List current workspace roots that scripts have access to.")]
-    async fn list_roots(&self) -> String {
-        let context = runtime::ExecutionContext::default();
-        let mut output = "📁 Current Workspace Roots:\n\n".to_string();
-        for root in &context.roots {
-            output.push_str(&format!("• {}\n", root));
-        }
-        output.push_str(&format!("\n📂 Tools Directory: {}", context.tools_dir));
-        output.push_str(&format!(
-            "\n📂 Working Directory: {}",
-            context.working_directory
-        ));
-        output
-    }
-
     // ==================== SEQUENTIAL SKILL CREATION ====================
 
     #[tool(description = r#"Create skills step-by-step with guided workflow.
@@ -610,7 +528,9 @@ Steps:
 3. **Test** - Validate the code compiles/runs correctly
 4. **Finalize** - Register the skill and make it available
 
-Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
+Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc.
+
+CRITICAL for Python scripts: Use sys.stdin.readline() NOT sys.stdin.read()! read() blocks forever. Always call sys.stdout.flush() after printing."#)]
     async fn create_skill(&self, Parameters(args): Parameters<CreateSkillArgs>) -> String {
         let step_name = match args.step {
             1 => "📋 Design",
@@ -708,104 +628,71 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
 
                 if args.skill_type == "wasm" {
                     // Build and register WASM tool
-                    let wasm_path = match builder::Builder::compile_tool(&args.name, &args.content)
+                    let wasm_bytes = match builder::Builder::compile_tool(&args.name, &args.content)
                     {
-                        Ok(path) => path,
+                        Ok(path) => match std::fs::read(&path) {
+                            Ok(bytes) => bytes,
+                            Err(e) => return format!("❌ Failed to read WASM: {}", e),
+                        },
                         Err(e) => return format!("❌ Failed to compile: {}", e),
                     };
 
-                    let dest = self
-                        .registry
-                        .storage_dir()
-                        .join(format!("{}.wasm", args.name));
-                    if let Err(e) = std::fs::copy(&wasm_path, &dest) {
-                        return format!("❌ Failed to copy: {}", e);
-                    }
+                    let manifest = registry::ToolManifest::new(
+                        args.name.clone(),
+                        args.description.clone(),
+                        ToolType::Wasm,
+                    );
 
-                    if let Err(e) = self.registry.register_tool(registry::ToolConfig {
-                        name: args.name.clone(),
-                        description: args.description.clone(),
-                        tool_type: ToolType::Wasm,
-                        wasm_path: dest,
-                        script_path: std::path::PathBuf::new(),
-                        interpreter: None,
-                        input_schema: registry::ToolSchema::default(),
-                        output_schema: None,
-                        annotations: None,
-                        dependencies: vec![],
-                        env_path: None,
-                        deps_installed: false,
-                    }) {
-                        return format!("❌ Failed to register: {}", e);
+                    match self.registry.register_tool(manifest, &wasm_bytes) {
+                        Ok(config) => {
+                            output.push_str(&format!(
+                                "🎉 **Skill `{}` created successfully!**\n\n",
+                                args.name
+                            ));
+                            output.push_str("**Type:** 🦀 WASM Tool\n");
+                            output.push_str(&format!(
+                                "**Directory:** {}\n",
+                                config.tool_dir.display()
+                            ));
+                            output.push_str(&format!(
+                                "**Usage:** `call_tool(tool_name: \"{}\")`\n",
+                                args.name
+                            ));
+                        }
+                        Err(e) => return format!("❌ Failed to register: {}", e),
                     }
-
-                    output.push_str(&format!(
-                        "🎉 **Skill `{}` created successfully!**\n\n",
-                        args.name
-                    ));
-                    output.push_str("**Type:** 🦀 WASM Tool\n");
-                    output.push_str(&format!(
-                        "**Usage:** `call_tool(tool_name: \"{}\")`\n",
-                        args.name
-                    ));
                 } else {
                     // Register script tool
-                    let ext = match args.interpreter.as_deref() {
-                        Some("python3") | Some("python") => "py",
-                        Some("node") | Some("nodejs") => "js",
-                        Some("ruby") => "rb",
-                        Some("bash") | Some("sh") => "sh",
-                        _ => "script",
-                    };
+                    let mut manifest = registry::ToolManifest::new(
+                        args.name.clone(),
+                        args.description.clone(),
+                        ToolType::Script,
+                    );
+                    manifest.interpreter = args.interpreter.clone();
 
-                    let script_path = self
-                        .registry
-                        .scripts_dir()
-                        .join(format!("{}.{}", args.name, ext));
-                    if let Err(e) = std::fs::write(&script_path, &args.content) {
-                        return format!("❌ Failed to save script: {}", e);
-                    }
-
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        if let Ok(metadata) = std::fs::metadata(&script_path) {
-                            let mut perms = metadata.permissions();
-                            perms.set_mode(0o755);
-                            let _ = std::fs::set_permissions(&script_path, perms);
+                    match self.registry.register_tool(manifest, args.content.as_bytes()) {
+                        Ok(config) => {
+                            output.push_str(&format!(
+                                "🎉 **Skill `{}` created successfully!**\n\n",
+                                args.name
+                            ));
+                            output.push_str(&format!(
+                                "**Type:** 📜 Script ({})\n",
+                                args.interpreter
+                                    .clone()
+                                    .unwrap_or_else(|| "executable".to_string())
+                            ));
+                            output.push_str(&format!(
+                                "**Directory:** {}\n",
+                                config.tool_dir.display()
+                            ));
+                            output.push_str(&format!(
+                                "**Usage:** `call_tool(tool_name: \"{}\")`\n",
+                                args.name
+                            ));
                         }
+                        Err(e) => return format!("❌ Failed to register: {}", e),
                     }
-
-                    if let Err(e) = self.registry.register_tool(registry::ToolConfig {
-                        name: args.name.clone(),
-                        description: args.description.clone(),
-                        tool_type: ToolType::Script,
-                        wasm_path: std::path::PathBuf::new(),
-                        script_path: script_path.clone(),
-                        interpreter: args.interpreter.clone(),
-                        input_schema: registry::ToolSchema::default(),
-                        output_schema: None,
-                        annotations: None,
-                        dependencies: vec![],
-                        env_path: None,
-                        deps_installed: false,
-                    }) {
-                        return format!("❌ Failed to register: {}", e);
-                    }
-
-                    output.push_str(&format!(
-                        "🎉 **Skill `{}` created successfully!**\n\n",
-                        args.name
-                    ));
-                    output.push_str(&format!(
-                        "**Type:** 📜 Script ({})\n",
-                        args.interpreter.unwrap_or_else(|| "executable".to_string())
-                    ));
-                    output.push_str(&format!("**Path:** {}\n", script_path.display()));
-                    output.push_str(&format!(
-                        "**Usage:** `call_tool(tool_name: \"{}\")`\n",
-                        args.name
-                    ));
                 }
             }
             _ => {
@@ -835,8 +722,8 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                                 .registry
                                 .list_tools()
                                 .iter()
-                                .filter(|t| t.name.starts_with(&args.argument_value))
-                                .map(|t| t.name.clone())
+                                .filter(|t| t.name().starts_with(&args.argument_value))
+                                .map(|t| t.name().to_string())
                                 .take(10)
                                 .collect();
                         }
@@ -863,7 +750,7 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                         }
                         _ => {
                             // Check tool's input schema for enum values
-                            if let Some(props) = &tool.input_schema.properties {
+                            if let Some(props) = &tool.input_schema().properties {
                                 if let Some(prop) = props.get(&args.argument_name) {
                                     if let Some(enum_values) = prop.get("enum") {
                                         if let Some(arr) = enum_values.as_array() {
@@ -918,7 +805,7 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
             self.registry
                 .list_tools()
                 .into_iter()
-                .filter(|t| tool_names.contains(&t.name))
+                .filter(|t| tool_names.contains(&t.name().to_string()))
                 .collect()
         } else {
             self.registry.list_tools()
@@ -1013,9 +900,9 @@ def {}(**kwargs):
     """{}"""
     return _call_tool("{}", kwargs)
 "#,
-                        tool.name.replace('-', "_"),
-                        tool.description,
-                        tool.name
+                        tool.name().replace('-', "_"),
+                        tool.description(),
+                        tool.name()
                     ));
                 }
                 "javascript" | "js" | "node" => {
@@ -1026,9 +913,9 @@ function {}(args) {{
     return _call_tool("{}", args || {{}});
 }}
 "#,
-                        tool.name.replace('-', "_"),
-                        tool.description,
-                        tool.name
+                        tool.name().replace('-', "_"),
+                        tool.description(),
+                        tool.name()
                     ));
                 }
                 _ => {}
@@ -1044,7 +931,7 @@ function {}(args) {{
         tool_stubs: &str,
         tools: &[registry::ToolConfig],
     ) -> String {
-        let tool_names: Vec<_> = tools.iter().map(|t| format!("\"{}\"", t.name)).collect();
+        let tool_names: Vec<_> = tools.iter().map(|t| format!("\"{}\"", t.name())).collect();
 
         format!(
             r#"#!/usr/bin/env python3
@@ -1079,7 +966,7 @@ def _call_tool(name, args):
         tool_stubs: &str,
         tools: &[registry::ToolConfig],
     ) -> String {
-        let tool_names: Vec<_> = tools.iter().map(|t| format!("\"{}\"", t.name)).collect();
+        let tool_names: Vec<_> = tools.iter().map(|t| format!("\"{}\"", t.name())).collect();
 
         format!(
             r#"#!/usr/bin/env node
@@ -1109,7 +996,7 @@ function _call_tool(name, args) {{
 impl ServerHandler for AppState {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            instructions: Some("Skillz - Build and execute custom tools at runtime. Supports WASM (Rust) and Script tools (Python, Node.js, Ruby, etc.) via JSON-RPC 2.0.".into()),
+            instructions: Some("Skillz - Build and execute custom tools at runtime. Supports WASM (Rust) and Script tools (Python, Node.js, Ruby, etc.) via JSON-RPC 2.0. CRITICAL: For Python scripts, use sys.stdin.readline() NOT sys.stdin.read() - read() blocks forever! Always call sys.stdout.flush() after printing.".into()),
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
@@ -1143,14 +1030,14 @@ impl ServerHandler for AppState {
 
         // Add dynamic resources for each built tool
         for tool in self.registry.list_tools() {
-            let type_emoji = match tool.tool_type {
+            let type_emoji = match tool.tool_type() {
                 ToolType::Wasm => "🦀",
                 ToolType::Script => "📜",
             };
             resources.push(
                 RawResource::new(
-                    format!("skillz://tools/{}", tool.name),
-                    format!("{} {} - {}", type_emoji, tool.name, tool.description),
+                    format!("skillz://tools/{}", tool.name()),
+                    format!("{} {} - {}", type_emoji, tool.name(), tool.description()),
                 )
                 .no_annotation(),
             );
@@ -1194,11 +1081,11 @@ impl AppState {
         let tools = self.registry.list_tools();
         let wasm_tools: Vec<_> = tools
             .iter()
-            .filter(|t| t.tool_type == ToolType::Wasm)
+            .filter(|t| *t.tool_type() == ToolType::Wasm)
             .collect();
         let script_tools: Vec<_> = tools
             .iter()
-            .filter(|t| t.tool_type == ToolType::Script)
+            .filter(|t| *t.tool_type() == ToolType::Script)
             .collect();
 
         let mut guide = String::from(
@@ -1237,7 +1124,7 @@ call_tool(tool_name: "my_tool", arguments: {...})
 
 ### `list_tools` - List all registered tools
 ### `test_validate` - Validate Rust code before building
-### `add_root` / `list_roots` - Manage workspace roots
+### `delete_tool` - Remove a registered tool
 
 ---
 
@@ -1251,10 +1138,10 @@ call_tool(tool_name: "my_tool", arguments: {...})
             if !wasm_tools.is_empty() {
                 guide.push_str("### 🦀 WASM Tools\n\n");
                 for tool in &wasm_tools {
-                    guide.push_str(&format!("- **{}** - {}\n", tool.name, tool.description));
+                    guide.push_str(&format!("- **{}** - {}\n", tool.name(), tool.description()));
                     guide.push_str(&format!(
                         "  ```\n  call_tool(tool_name: \"{}\")\n  ```\n\n",
-                        tool.name
+                        tool.name()
                     ));
                 }
             }
@@ -1262,14 +1149,14 @@ call_tool(tool_name: "my_tool", arguments: {...})
             if !script_tools.is_empty() {
                 guide.push_str("### 📜 Script Tools\n\n");
                 for tool in &script_tools {
-                    let interp = tool.interpreter.as_deref().unwrap_or("executable");
+                    let interp = tool.interpreter().unwrap_or("executable");
                     guide.push_str(&format!(
                         "- **{}** [{}] - {}\n",
-                        tool.name, interp, tool.description
+                        tool.name(), interp, tool.description()
                     ));
                     guide.push_str(&format!(
                         "  ```\n  call_tool(tool_name: \"{}\")\n  ```\n\n",
-                        tool.name
+                        tool.name()
                     ));
                 }
             }
@@ -1348,11 +1235,13 @@ import json
 import sys
 
 def main():
-    request = json.loads(sys.stdin.read())
-    params = request.get("params", {})
+    # IMPORTANT: Use readline() not read()!
+    # read() blocks waiting for EOF and causes timeouts
+    request = json.loads(sys.stdin.readline())
+    args = request.get("params", {}).get("arguments", {})
     
     # Your tool logic here
-    result = {"message": "Hello from Python!", "params": params}
+    result = {"message": "Hello from Python!", "args": args}
     
     response = {
         "jsonrpc": "2.0",
@@ -1360,6 +1249,7 @@ def main():
         "id": request.get("id")
     }
     print(json.dumps(response))
+    sys.stdout.flush()
 
 if __name__ == "__main__":
     main()
@@ -1367,6 +1257,7 @@ if __name__ == "__main__":
 
 ### Node.js Example
 ```javascript
+// Use readline to read one line at a time (not stdin.read which blocks)
 const readline = require('readline');
 
 const rl = readline.createInterface({
@@ -1377,16 +1268,16 @@ const rl = readline.createInterface({
 
 rl.on('line', (line) => {
     const request = JSON.parse(line);
+    const args = request.params?.arguments || {};
     
     // Your tool logic here
-    const result = { message: "Hello from Node.js!", params: request.params };
+    const result = { message: "Hello from Node.js!", args };
     
-    const response = {
+    console.log(JSON.stringify({
         jsonrpc: "2.0",
         result: result,
         id: request.id
-    };
-    console.log(JSON.stringify(response));
+    }));
     process.exit(0);
 });
 ```
@@ -1404,10 +1295,13 @@ echo '{"jsonrpc":"2.0","result":{"message":"Hello from Bash!"},"id":1}'
 #!/usr/bin/env ruby
 require 'json'
 
-request = JSON.parse(STDIN.read)
-result = { message: "Hello from Ruby!", params: request["params"] }
+# Use gets (reads one line) instead of read (waits for EOF)
+request = JSON.parse(STDIN.gets)
+args = request.dig("params", "arguments") || {}
+result = { message: "Hello from Ruby!", args: args }
 response = { jsonrpc: "2.0", result: result, id: request["id"] }
 puts response.to_json
+STDOUT.flush
 ```
 "##
         .to_string()
@@ -1458,12 +1352,18 @@ When Skillz calls your tool, it sends:
 ```
 
 ### Context Fields
-- `roots` - Workspace directories the tool can access
+- `roots` - Workspace directories (from MCP client, `SKILLZ_ROOTS` env, or cwd)
 - `working_directory` - Current working directory
 - `tool_name` - Name of the executing tool
 - `tools_dir` - Directory where tools are stored
 - `environment` - Safe environment variables
 - `capabilities` - What MCP features the client supports
+
+### Configuring Roots
+Roots are resolved in this priority order:
+1. **MCP Client** - Roots provided by the MCP client (automatic)
+2. **SKILLZ_ROOTS env** - Colon-separated paths: `SKILLZ_ROOTS=/path/one:/path/two`
+3. **cwd** - Current working directory (fallback)
 
 ---
 
@@ -1612,7 +1512,8 @@ def sample(prompt, max_tokens=500):
     return json.loads(sys.stdin.readline())
 
 def main():
-    request = json.loads(sys.stdin.read())
+    # IMPORTANT: Use readline() not read() - read() blocks for EOF!
+    request = json.loads(sys.stdin.readline())
     context = request.get("params", {}).get("context", {})
     caps = context.get("capabilities", {})
     
@@ -1638,7 +1539,18 @@ if __name__ == "__main__":
 
 ---
 
-## Tips
+## ⚠️ Critical Tips
+
+### Use `readline()` NOT `read()`!
+```python
+# ✅ CORRECT - Returns immediately
+request = json.loads(sys.stdin.readline())
+
+# ❌ WRONG - Blocks forever waiting for EOF!
+request = json.loads(sys.stdin.read())
+```
+
+### Other Tips
 - Check `context.capabilities` before using elicitation/sampling
 - Use `flush=True` to ensure output is sent immediately
 - Elicitation/sampling are bidirectional - script sends request, waits for response
@@ -1650,31 +1562,32 @@ if __name__ == "__main__":
     fn get_tool_info(&self, tool_name: &str) -> String {
         match self.registry.get_tool(tool_name) {
             Some(tool) => {
-                let (type_name, type_emoji, path_info) = match tool.tool_type {
+                let (type_name, type_emoji, path_info) = match tool.tool_type() {
                     ToolType::Wasm => (
                         "WASM",
                         "🦀",
-                        format!("WASM Path: {}", tool.wasm_path.display()),
+                        format!("Directory: {}", tool.tool_dir.display()),
                     ),
                     ToolType::Script => {
-                        let interp = tool.interpreter.as_deref().unwrap_or("executable");
+                        let interp = tool.interpreter().unwrap_or("executable");
                         (
                             "Script",
                             "📜",
                             format!(
-                                "Script Path: {}\nInterpreter: {}",
-                                tool.script_path.display(),
+                                "Directory: {}\nInterpreter: {}",
+                                tool.tool_dir.display(),
                                 interp
                             ),
                         )
                     }
                 };
+                let version_info = format!("- **Version:** {}\n", tool.manifest.version);
                 format!(
-                    "# {} {} Tool: {}\n\n## Description\n{}\n\n## Details\n- **Type:** {}\n- **Name:** {}\n- {}\n- **Status:** ✅ Ready to use\n\n## Usage\n```\ncall_tool(tool_name: \"{}\")\n```\n",
-                    type_emoji, type_name, tool.name,
-                    tool.description,
-                    type_name, tool.name, path_info,
-                    tool.name
+                    "# {} {} Tool: {}\n\n## Description\n{}\n\n## Details\n- **Type:** {}\n- **Name:** {}\n{}- {}\n- **Status:** ✅ Ready to use\n\n## Usage\n```\ncall_tool(tool_name: \"{}\")\n```\n",
+                    type_emoji, type_name, tool.name(),
+                    tool.description(),
+                    type_name, tool.name(), version_info, path_info,
+                    tool.name()
                 )
             }
             None => format!(
