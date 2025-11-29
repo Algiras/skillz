@@ -14,9 +14,22 @@
 [Configure](#-editor-configuration) •
 [Features](#-features) •
 [Examples](#-quick-examples) •
-[Script Guide](#-writing-script-tools)
+[Documentation](https://algiras.github.io/skillz)
 
 </div>
+
+---
+
+## 🎯 Why Skillz?
+
+Traditional MCP servers have a fixed set of tools. **Skillz lets your AI create new tools on the fly.**
+
+- **Problem**: Need a new capability? Write a server, deploy it, restart your editor.
+- **Skillz Solution**: Ask your AI to build the tool. It compiles Rust to WASM or registers a script. Done.
+
+**Example**: "Build me a tool that fetches weather data" → AI writes the code → Tool is instantly available.
+
+No deployments. No restarts. Just ask.
 
 ---
 
@@ -96,6 +109,7 @@ Add to `~/.cursor/mcp.json`:
 | 📂 **Shareable** | Each tool has its own directory with manifest.json |
 | 📖 **Dynamic Guide** | Built-in `skillz://guide` resource updates automatically |
 | 🌐 **Tool Import** | Import tools from GitHub repos or Gists |
+| ⛓️ **Pipelines** | Chain tools together declaratively *(v0.3.0+)* |
 
 ---
 
@@ -107,7 +121,9 @@ Add to `~/.cursor/mcp.json`:
 | `register_script` | Register script with optional deps & annotations |
 | `create_skill` | Step-by-step guided creation |
 | `import_tool` | Import tools from git repos or GitHub gists |
-| `call_tool` | Execute any registered tool |
+| `create_pipeline` | Create a pipeline that chains tools together *(v0.3.0+)* |
+| `list_pipelines` | List all pipeline tools *(v0.3.0+)* |
+| `call_tool` | Execute any tool (WASM, Script, or Pipeline) |
 | `list_tools` | List all available tools |
 | `complete` | Get autocomplete suggestions for arguments |
 | `execute_code` | Run code that composes multiple tools |
@@ -216,6 +232,30 @@ import_tool(
   source: "https://gist.github.com/user/abc123def456"
 )
 ```
+
+### Create a Pipeline (Chain Tools)
+
+```
+# Pipelines are tools that chain other tools together!
+create_pipeline(
+  name: "process_data",
+  description: "Fetch, transform, and format data",
+  steps: [
+    { name: "fetch", tool: "http_get", args: { url: "$input.url" } },
+    { tool: "json_parse", args: { text: "$fetch.body" } },
+    { tool: "format_report", args: { data: "$prev" } }
+  ]
+)
+
+# Run the pipeline like any other tool
+call_tool(tool_name: "process_data", arguments: { url: "https://api.example.com/data" })
+```
+
+**Variable syntax in pipelines:**
+- `$input.field` - Access pipeline input
+- `$prev` - Previous step's entire output
+- `$prev.field` - Access field from previous step
+- `$step_name.field` - Access field from a named step
 
 ### Execute Multiple Tools via Code
 
