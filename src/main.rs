@@ -5,6 +5,7 @@ mod registry;
 mod runtime;
 
 use anyhow::Result;
+use clap::Parser;
 use registry::ToolType;
 use rmcp::schemars::JsonSchema;
 use rmcp::{
@@ -20,6 +21,44 @@ use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
 };
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
+
+/// CLI arguments for Skillz MCP server
+#[derive(Parser, Debug)]
+#[command(name = "skillz")]
+#[command(author = "Algimantas Krasauskas")]
+#[command(version)]
+#[command(about = "Self-extending MCP server - build and execute custom AI tools at runtime")]
+#[command(long_about = r#"
+Skillz is an MCP server that can create new tools on-the-fly.
+
+TRANSPORT MODES:
+  - stdio (default): Standard input/output for CLI integrations
+  - http: HTTP server with SSE for web integrations
+
+EXAMPLES:
+  # Run with stdio (default, for Cursor/Claude Desktop)
+  skillz
+
+  # Run as HTTP server on port 8080
+  skillz --transport http --port 8080
+
+  # Custom tools directory
+  TOOLS_DIR=/my/tools skillz
+"#)]
+struct Cli {
+    /// Transport mode: stdio or http
+    #[arg(short, long, default_value = "stdio")]
+    transport: String,
+
+    /// Port for HTTP transport (only used with --transport http)
+    #[arg(short, long, default_value = "8080")]
+    port: u16,
+
+    /// Host to bind for HTTP transport
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+}
 
 // Define the state
 #[derive(Clone)]
@@ -2063,6 +2102,8 @@ request = json.loads(sys.stdin.read())
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
     // Get tools directory from env var or use ~/tools as default
     let tools_dir = std::env::var("TOOLS_DIR").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -2079,9 +2120,68 @@ async fn main() -> Result<()> {
 
     let state = AppState::new(registry, runtime);
 
-    eprintln!("Skillz MCP started (WASM + Script + Pipeline tools)");
+    match cli.transport.as_str() {
+        "stdio" => {
+            eprintln!("Skillz MCP started (stdio transport)");
+            state.serve(stdio()).await?.waiting().await?;
+        }
+        "http" | "sse" => {
+            use rmcp::transport::sse_server::{SseServer, SseServerConfig};
+            use tokio_util::sync::CancellationToken;
 
-    state.serve(stdio()).await?.waiting().await?;
+            let addr: SocketAddr = format!("{}:{}", cli.host, cli.port).parse()?;
+            let ct = CancellationToken::new();
+
+            let config = SseServerConfig {
+                bind: addr,
+                sse_path: "/sse".to_string(),
+                post_path: "/message".to_string(),
+                ct: ct.clone(),
+                sse_keep_alive: None,
+            };
+
+            eprintln!("Skillz MCP started (HTTP/SSE transport)");
+            eprintln!("  SSE endpoint: http://{}/sse", addr);
+            eprintln!("  POST endpoint: http://{}/message", addr);
+            eprintln!();
+            eprintln!("Connect with:");
+            eprintln!(
+                "  curl -N http://{}/sse -H 'Accept: text/event-stream'",
+                addr
+            );
+
+            // Start the SSE server (it handles the HTTP server internally)
+            let mut sse_server = SseServer::serve_with_config(config).await?;
+
+            // Accept and serve MCP connections
+            loop {
+                tokio::select! {
+                    transport = sse_server.next_transport() => {
+                        if let Some(transport) = transport {
+                            let state_clone = state.clone();
+                            tokio::spawn(async move {
+                                eprintln!("New SSE client connected");
+                                if let Err(e) = state_clone.serve(transport).await {
+                                    eprintln!("Client error: {}", e);
+                                }
+                            });
+                        } else {
+                            break;
+                        }
+                    }
+                    _ = tokio::signal::ctrl_c() => {
+                        eprintln!("\nShutting down...");
+                        ct.cancel();
+                        break;
+                    }
+                }
+            }
+        }
+        other => {
+            eprintln!("Unknown transport: {}. Use 'stdio' or 'http'", other);
+            std::process::exit(1);
+        }
+    }
 
     Ok(())
 }

@@ -18,11 +18,6 @@ context.save_state(state)
 
 ## 🎯 Medium Priority
 
-### HTTP Transport with SSE
-- Run Skillz as a web service
-- Multiple clients can connect
-- Server-Sent Events for streaming
-
 ### Tool Result Streaming
 - Stream large outputs progressively
 - Real-time feedback for long operations
@@ -95,6 +90,7 @@ Support compiling from other languages to WASM:
 - [x] Environment variable configuration (SKILLZ_ROOTS, etc.)
 - [x] Tool import from Git repos and GitHub Gists
 - [x] **Pipelines** - Chain tools together (pipelines ARE tools!)
+- [x] **HTTP Transport with SSE** - Run as web service with multiple clients
 
 ---
 

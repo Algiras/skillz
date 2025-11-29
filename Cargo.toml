@@ -1,6 +1,6 @@
 [package]
 name = "skillz"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 authors = ["Algimantas Krasauskas"]
 description = "Self-extending MCP server - build and execute custom AI tools at runtime"
@@ -25,7 +25,9 @@ wasmtime = "26.0.0"
 wasmtime-wasi = "26.0.0"
 anyhow = "1.0"
 tempfile = "3.8"
-rmcp = { version = "0.9.1", features = ["transport-io", "elicitation"] }
+rmcp = { version = "0.9.1", features = ["transport-io", "transport-sse-server", "elicitation"] }
+clap = { version = "4.4", features = ["derive"] }
+tokio-util = "0.7"
 rmcp-macros = "0.9.1"
 
 [dev-dependencies]

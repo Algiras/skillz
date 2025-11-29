@@ -39,8 +39,18 @@ No deployments. No restarts. Just ask.
 # Install WASM target (required for building tools)
 rustup target add wasm32-wasip1
 
-# Install Skillz
+# Install Skillz from crates.io
 cargo install skillz
+```
+
+[![Crates.io](https://img.shields.io/crates/v/skillz.svg)](https://crates.io/crates/skillz)
+[![Downloads](https://img.shields.io/crates/d/skillz.svg)](https://crates.io/crates/skillz)
+
+Or build from source:
+```bash
+git clone https://github.com/Algiras/skillz.git
+cd skillz/mcp-wasm-host
+cargo install --path .
 ```
 
 ---
@@ -91,6 +101,33 @@ Add to `~/.cursor/mcp.json`:
 
 > **Note**: If `skillz` isn't in your PATH, use: `~/.cargo/bin/skillz`
 
+### HTTP Server Mode *(v0.4.0+)*
+
+Run Skillz as an HTTP server for web integrations:
+
+```bash
+# Start HTTP server on port 8080
+skillz --transport http --port 8080
+
+# Custom host binding
+skillz --transport http --host 0.0.0.0 --port 3000
+```
+
+**Endpoints:**
+- `GET /sse` - Server-Sent Events stream for real-time updates
+- `POST /message` - Send JSON-RPC messages
+
+**Connect with curl:**
+```bash
+# Establish SSE connection
+curl -N http://localhost:8080/sse -H 'Accept: text/event-stream'
+
+# Send a message (in another terminal)
+curl -X POST http://localhost:8080/message \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
 ---
 
 ## 🎯 Features
@@ -110,6 +147,7 @@ Add to `~/.cursor/mcp.json`:
 | 📖 **Dynamic Guide** | Built-in `skillz://guide` resource updates automatically |
 | 🌐 **Tool Import** | Import tools from GitHub repos or Gists |
 | ⛓️ **Pipelines** | Chain tools together declaratively *(v0.3.0+)* |
+| 🌍 **HTTP Transport** | Run as HTTP server with SSE for web apps *(v0.4.0+)* |
 
 ---
 
