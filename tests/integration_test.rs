@@ -190,9 +190,9 @@ fn test_list_tools() {
     let _ = child.wait();
 }
 
-/// Test code validation
+/// Test memory tool (consolidated tool with actions)
 #[test]
-fn test_code_validation() {
+fn test_memory_tool() {
     let build_status = Command::new("cargo")
         .args(["build", "--release"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -241,15 +241,18 @@ fn test_code_validation() {
     .unwrap();
     stdin.flush().unwrap();
 
-    // Test validation with valid code
+    // Test memory store action
     let response = send_request(
         &mut stdin,
         &mut reader,
         "tools/call",
         serde_json::json!({
-            "name": "test_validate",
+            "name": "memory",
             "arguments": {
-                "code": "fn main() { println!(\"Hello\"); }"
+                "action": "store",
+                "tool_name": "test_tool",
+                "key": "test_key",
+                "value": "test_value"
             }
         }),
         2,
@@ -258,7 +261,7 @@ fn test_code_validation() {
     assert!(response.get("result").is_some());
     let content = &response["result"]["content"][0]["text"];
     assert!(
-        content.as_str().unwrap().contains("passed") || content.as_str().unwrap().contains("✓")
+        content.as_str().unwrap().contains("Stored") || content.as_str().unwrap().contains("✅")
     );
 
     let _ = child.kill();

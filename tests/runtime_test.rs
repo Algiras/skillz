@@ -348,3 +348,443 @@ fn test_nested_output_access() {
     assert_eq!(output["result"]["data"]["users"][0]["name"], "Alice");
     assert_eq!(output["result"]["data"]["users"][1]["age"], 25);
 }
+
+// ==================== ELICITATION TESTS ====================
+
+/// Test elicitation request format (script → host)
+#[test]
+fn test_elicitation_request_format() {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "elicitation/create",
+        "params": {
+            "message": "What is your name?",
+            "requestedSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Your name"}
+                },
+                "required": ["name"]
+            }
+        },
+        "id": 1
+    });
+
+    assert_eq!(request["jsonrpc"], "2.0");
+    assert_eq!(request["method"], "elicitation/create");
+    assert_eq!(request["params"]["message"], "What is your name?");
+    assert!(request["params"]["requestedSchema"]["properties"]["name"].is_object());
+    assert!(request["id"].is_number());
+}
+
+/// Test elicitation response format (host → script)
+#[test]
+fn test_elicitation_response_format() {
+    // Successful elicitation with user accepting
+    let accept_response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "result": {
+            "action": "accept",
+            "content": {
+                "name": "Alice"
+            }
+        },
+        "id": 1
+    });
+
+    assert_eq!(accept_response["result"]["action"], "accept");
+    assert_eq!(accept_response["result"]["content"]["name"], "Alice");
+
+    // User cancelled elicitation
+    let cancel_response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "result": {
+            "action": "cancel"
+        },
+        "id": 1
+    });
+
+    assert_eq!(cancel_response["result"]["action"], "cancel");
+    assert!(cancel_response["result"]["content"].is_null());
+
+    // User declined elicitation
+    let decline_response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "result": {
+            "action": "decline"
+        },
+        "id": 1
+    });
+
+    assert_eq!(decline_response["result"]["action"], "decline");
+}
+
+/// Test elicitation with various schema types
+#[test]
+fn test_elicitation_schema_types() {
+    // String input
+    let string_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"}
+        },
+        "required": ["text"]
+    });
+    assert_eq!(string_schema["properties"]["text"]["type"], "string");
+
+    // Number input
+    let number_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "count": {"type": "integer", "minimum": 0, "maximum": 100}
+        },
+        "required": ["count"]
+    });
+    assert_eq!(number_schema["properties"]["count"]["type"], "integer");
+
+    // Boolean input
+    let bool_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "confirm": {"type": "boolean", "description": "Confirm action?"}
+        },
+        "required": ["confirm"]
+    });
+    assert_eq!(bool_schema["properties"]["confirm"]["type"], "boolean");
+
+    // Enum input
+    let enum_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "color": {
+                "type": "string",
+                "enum": ["red", "green", "blue"]
+            }
+        },
+        "required": ["color"]
+    });
+    assert!(enum_schema["properties"]["color"]["enum"].is_array());
+}
+
+// ==================== SAMPLING TESTS ====================
+
+/// Test sampling request format (script → host)
+#[test]
+fn test_sampling_request_format() {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "sampling/createMessage",
+        "params": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {
+                        "type": "text",
+                        "text": "What is 2 + 2?"
+                    }
+                }
+            ],
+            "maxTokens": 100
+        },
+        "id": 1
+    });
+
+    assert_eq!(request["jsonrpc"], "2.0");
+    assert_eq!(request["method"], "sampling/createMessage");
+    assert!(request["params"]["messages"].is_array());
+    assert_eq!(request["params"]["messages"][0]["role"], "user");
+    assert_eq!(request["params"]["messages"][0]["content"]["type"], "text");
+    assert_eq!(request["params"]["maxTokens"], 100);
+}
+
+/// Test sampling response format (host → script)
+#[test]
+fn test_sampling_response_format() {
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "result": {
+            "role": "assistant",
+            "content": {
+                "type": "text",
+                "text": "2 + 2 equals 4."
+            },
+            "model": "claude-3-opus",
+            "stopReason": "end_turn"
+        },
+        "id": 1
+    });
+
+    assert_eq!(response["result"]["role"], "assistant");
+    assert_eq!(response["result"]["content"]["type"], "text");
+    assert_eq!(response["result"]["content"]["text"], "2 + 2 equals 4.");
+    assert_eq!(response["result"]["model"], "claude-3-opus");
+    assert_eq!(response["result"]["stopReason"], "end_turn");
+}
+
+/// Test sampling with multiple messages (conversation history)
+#[test]
+fn test_sampling_conversation_history() {
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "sampling/createMessage",
+        "params": {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": {"type": "text", "text": "My name is Alice."}
+                },
+                {
+                    "role": "assistant",
+                    "content": {"type": "text", "text": "Hello Alice! How can I help you today?"}
+                },
+                {
+                    "role": "user",
+                    "content": {"type": "text", "text": "What's my name?"}
+                }
+            ],
+            "maxTokens": 50,
+            "systemPrompt": "You are a helpful assistant."
+        },
+        "id": 2
+    });
+
+    assert_eq!(request["params"]["messages"].as_array().unwrap().len(), 3);
+    assert_eq!(request["params"]["messages"][0]["role"], "user");
+    assert_eq!(request["params"]["messages"][1]["role"], "assistant");
+    assert_eq!(request["params"]["messages"][2]["role"], "user");
+    assert_eq!(request["params"]["systemPrompt"], "You are a helpful assistant.");
+}
+
+/// Test sampling error response (e.g., client doesn't support sampling)
+#[test]
+fn test_sampling_error_response() {
+    let error_response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "result": {
+            "error": "Sampling not supported by client"
+        },
+        "id": 1
+    });
+
+    assert!(error_response["result"]["error"].is_string());
+    assert_eq!(error_response["result"]["error"], "Sampling not supported by client");
+}
+
+// ==================== BIDIRECTIONAL COMMUNICATION TESTS ====================
+
+/// Test bidirectional script that uses elicitation
+#[test]
+fn test_script_with_elicitation() {
+    // Check if Python is available
+    let python_check = Command::new("python3").arg("--version").output();
+    if python_check.is_err() || !python_check.unwrap().status.success() {
+        eprintln!("Skipping Python test: python3 not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let script_path = temp_dir.path().join("elicit_test.py");
+
+    // Script that checks capabilities and simulates elicitation flow
+    let script = r#"#!/usr/bin/env python3
+import json
+import sys
+
+# Read initial request
+request = json.loads(sys.stdin.readline())
+context = request.get("params", {}).get("context", {})
+caps = context.get("capabilities", {})
+
+result = {
+    "elicitation_available": caps.get("elicitation", False),
+    "would_elicit": caps.get("elicitation", False)
+}
+
+# If elicitation is available, we would send a request and wait for response
+# In this test, we just verify the capability check works
+if caps.get("elicitation"):
+    result["message"] = "Elicitation supported - would prompt user"
+else:
+    result["message"] = "Elicitation not supported - using fallback"
+
+print(json.dumps({"jsonrpc": "2.0", "result": result, "id": request.get("id")}))
+sys.stdout.flush()
+"#;
+
+    fs::write(&script_path, script).unwrap();
+
+    // Test with elicitation enabled
+    let mut child = Command::new("python3")
+        .arg(&script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let request = r#"{"jsonrpc": "2.0", "method": "execute", "params": {"arguments": {}, "context": {"capabilities": {"elicitation": true, "sampling": false, "memory": true}, "roots": [], "working_directory": "/tmp", "tool_name": "test", "environment": {}, "tools_dir": "/tools"}}, "id": 1}
+"#;
+
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(request.as_bytes()).unwrap();
+    }
+
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["result"]["elicitation_available"], true);
+    assert_eq!(response["result"]["message"], "Elicitation supported - would prompt user");
+}
+
+/// Test bidirectional script that checks sampling capability
+#[test]
+fn test_script_with_sampling_check() {
+    // Check if Python is available
+    let python_check = Command::new("python3").arg("--version").output();
+    if python_check.is_err() || !python_check.unwrap().status.success() {
+        eprintln!("Skipping Python test: python3 not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let script_path = temp_dir.path().join("sampling_test.py");
+
+    // Script that checks sampling capability
+    let script = r#"#!/usr/bin/env python3
+import json
+import sys
+
+request = json.loads(sys.stdin.readline())
+context = request.get("params", {}).get("context", {})
+caps = context.get("capabilities", {})
+
+result = {
+    "sampling_available": caps.get("sampling", False),
+    "elicitation_available": caps.get("elicitation", False),
+    "memory_available": caps.get("memory", False)
+}
+
+if caps.get("sampling"):
+    result["llm_message"] = "Would request LLM completion"
+else:
+    result["llm_message"] = "Sampling not available"
+
+print(json.dumps({"jsonrpc": "2.0", "result": result, "id": request.get("id")}))
+sys.stdout.flush()
+"#;
+
+    fs::write(&script_path, script).unwrap();
+
+    // Test with sampling disabled (like Cursor currently)
+    let mut child = Command::new("python3")
+        .arg(&script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let request = r#"{"jsonrpc": "2.0", "method": "execute", "params": {"arguments": {}, "context": {"capabilities": {"elicitation": true, "sampling": false, "memory": true}, "roots": [], "working_directory": "/tmp", "tool_name": "test", "environment": {}, "tools_dir": "/tools"}}, "id": 1}
+"#;
+
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(request.as_bytes()).unwrap();
+    }
+
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["result"]["sampling_available"], false);
+    assert_eq!(response["result"]["elicitation_available"], true);
+    assert_eq!(response["result"]["memory_available"], true);
+    assert_eq!(response["result"]["llm_message"], "Sampling not available");
+}
+
+/// Test memory request format (script → host)
+#[test]
+fn test_memory_request_format() {
+    // Memory set request
+    let set_request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "memory/set",
+        "params": {
+            "tool_name": "my_tool",
+            "key": "user_preference",
+            "value": {"theme": "dark", "language": "en"}
+        },
+        "id": 1
+    });
+
+    assert_eq!(set_request["method"], "memory/set");
+    assert_eq!(set_request["params"]["tool_name"], "my_tool");
+    assert_eq!(set_request["params"]["key"], "user_preference");
+    assert!(set_request["params"]["value"].is_object());
+
+    // Memory get request
+    let get_request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "memory/get",
+        "params": {
+            "tool_name": "my_tool",
+            "key": "user_preference"
+        },
+        "id": 2
+    });
+
+    assert_eq!(get_request["method"], "memory/get");
+    assert_eq!(get_request["params"]["tool_name"], "my_tool");
+    assert_eq!(get_request["params"]["key"], "user_preference");
+
+    // Memory list request
+    let list_request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "memory/list",
+        "params": {
+            "tool_name": "my_tool"
+        },
+        "id": 3
+    });
+
+    assert_eq!(list_request["method"], "memory/list");
+}
+
+/// Test memory response format (host → script)
+#[test]
+fn test_memory_response_format() {
+    // Successful get response
+    let get_response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "result": {
+            "value": {"theme": "dark", "language": "en"}
+        },
+        "id": 1
+    });
+
+    assert!(get_response["result"]["value"].is_object());
+    assert_eq!(get_response["result"]["value"]["theme"], "dark");
+
+    // Key not found response
+    let not_found_response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "result": {
+            "value": null
+        },
+        "id": 1
+    });
+
+    assert!(not_found_response["result"]["value"].is_null());
+
+    // List response
+    let list_response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "result": {
+            "keys": ["user_preference", "last_session", "settings"]
+        },
+        "id": 1
+    });
+
+    assert!(list_response["result"]["keys"].is_array());
+    assert_eq!(list_response["result"]["keys"].as_array().unwrap().len(), 3);
+}
