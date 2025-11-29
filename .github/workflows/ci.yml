@@ -11,64 +11,7 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: wasm32-wasip1
-
-    - name: Cache cargo
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
-
-    - name: Check
-      run: cargo check --all-targets
-
-  test:
-    name: Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: wasm32-wasip1
-
-    - name: Cache cargo
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
-
-    - name: Build
-      run: cargo build --release
-
-    - name: Run tests
-      run: cargo test --release -- --test-threads=1
-
+  # Fast lint check - runs first, fails fast
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -80,29 +23,31 @@ jobs:
       with:
         components: rustfmt, clippy
 
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2
+
     - name: Check formatting
       run: cargo fmt --all -- --check
 
     - name: Clippy
       run: cargo clippy --all-targets -- -D warnings
 
-  release:
-    name: Release Build
+  # Build and test - runs in parallel across all platforms
+  build:
+    name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: [check, test, lint]
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: skillz
           - os: macos-latest
             target: x86_64-apple-darwin
-            artifact: skillz
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: skillz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
 
     steps:
     - uses: actions/checkout@v4
@@ -112,12 +57,37 @@ jobs:
       with:
         targets: ${{ matrix.target }},wasm32-wasip1
 
-    - name: Build release
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.target }}
+
+    - name: Build
       run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Run tests
+      run: cargo test --release -- --test-threads=1
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: skillz-${{ matrix.target }}
-        path: target/${{ matrix.target }}/release/${{ matrix.artifact }}
-        if-no-files-found: error
+        path: |
+          target/${{ matrix.target }}/release/skillz
+          target/${{ matrix.target }}/release/skillz.exe
+        if-no-files-found: warn
+
+  # Summary job - waits for all builds
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [lint, build]
+    if: always()
+    steps:
+    - name: Check all jobs passed
+      run: |
+        if [[ "${{ needs.lint.result }}" != "success" ]] || [[ "${{ needs.build.result }}" != "success" ]]; then
+          echo "❌ Some jobs failed"
+          exit 1
+        fi
+        echo "✅ All CI jobs passed!"
