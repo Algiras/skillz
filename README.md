@@ -1,6 +1,8 @@
+<div align="center">
+
 # 🚀 Skillz - Self-Extending MCP Server
 
-<div align="center">
+<img src="docs/hero-banner.png" alt="Skillz Hero Banner" width="100%">
 
 [![Crates.io](https://img.shields.io/crates/v/skillz.svg)](https://crates.io/crates/skillz)
 [![CI](https://github.com/Algiras/skillz/actions/workflows/ci.yml/badge.svg)](https://github.com/Algiras/skillz/actions/workflows/ci.yml)
@@ -24,8 +26,40 @@
 
 Traditional MCP servers have a fixed set of tools. **Skillz lets your AI create new tools on the fly.**
 
-- **Problem**: Need a new capability? Write a server, deploy it, restart your editor.
-- **Skillz Solution**: Ask your AI to build the tool. It compiles Rust to WASM or registers a script. Done.
+<div align="center">
+<table>
+<tr>
+<td width="50%" align="center">
+  
+### ❌ Traditional MCP
+  
+🔒 **Fixed Tool Set**  
+Write server code
+
+⬆️ **Deploy & Restart**  
+Restart your editor
+
+⏱️ **Time Consuming**  
+Manual process
+
+</td>
+<td width="50%" align="center">
+  
+### ✅ Skillz
+
+🔧 **Dynamic Tools**  
+AI writes the code
+
+⚡ **Instant**  
+Compiles to WASM/Script
+
+🚀 **Zero Downtime**  
+No restarts needed
+
+</td>
+</tr>
+</table>
+</div>
 
 **Example**: "Build me a tool that fetches weather data" → AI writes the code → Tool is instantly available.
 
@@ -35,6 +69,13 @@ No deployments. No restarts. Just ask.
 
 ## ⚡ Installation
 
+<div align="center">
+
+[![Crates.io](https://img.shields.io/crates/v/skillz.svg)](https://crates.io/crates/skillz)
+[![Downloads](https://img.shields.io/crates/d/skillz.svg)](https://crates.io/crates/skillz)
+
+</div>
+
 ```bash
 # Install WASM target (required for building tools)
 rustup target add wasm32-wasip1
@@ -43,10 +84,8 @@ rustup target add wasm32-wasip1
 cargo install skillz
 ```
 
-[![Crates.io](https://img.shields.io/crates/v/skillz.svg)](https://crates.io/crates/skillz)
-[![Downloads](https://img.shields.io/crates/d/skillz.svg)](https://crates.io/crates/skillz)
+**Or build from source:**
 
-Or build from source:
 ```bash
 git clone https://github.com/Algiras/skillz.git
 cd skillz/mcp-wasm-host
@@ -132,13 +171,18 @@ curl -X POST http://localhost:8080/message \
 
 ## 🎯 Features
 
+<div align="center">
+
+### 🌟 Core Capabilities
+
+</div>
+
 | Feature | Description |
 |---------|-------------|
 | 🦀 **WASM Tools** | Compile Rust → WebAssembly at runtime |
 | 📦 **Rust Crates** | Add serde, regex, anyhow, etc. to WASM tools! |
 | 📜 **Script Tools** | Python, Node.js, Ruby, Bash, or any language |
 | 🏷️ **Tool Annotations** | Hints for clients (readOnly, destructive, idempotent) |
-| 🔍 **Completion API** | Autocomplete for tool arguments |
 | ⚡ **Code Execution** | Compose multiple tools via code (98% token savings!) |
 | 📦 **Dependencies** | Auto-install pip/npm/cargo packages per tool |
 | 💾 **Persistence** | Tools survive server restarts |
@@ -146,36 +190,41 @@ curl -X POST http://localhost:8080/message \
 | 📂 **Shareable** | Each tool has its own directory with manifest.json |
 | 📖 **Dynamic Guide** | Built-in `skillz://guide` resource updates automatically |
 | 🌐 **Tool Import** | Import tools from GitHub repos or Gists |
-| ⛓️ **Pipelines** | Chain tools together declaratively *(v0.3.0+)* |
-| 🌍 **HTTP Transport** | Run as HTTP server with SSE for web apps *(v0.4.0+)* |
+| ⛓️ **Pipelines** | Chain tools together declaratively |
+| 🌍 **HTTP Transport** | Run as HTTP server with SSE for web apps |
+| 💬 **Elicitation** | Scripts can request user input via MCP protocol |
+| 🧠 **Memory** | Persistent key-value storage for tools |
+| 📊 **Logging/Progress** | Scripts can send logs and progress updates |
 
 ---
 
-## 📖 Available Tools
+## 📖 Available Tools (9 Core)
 
 | Tool | Description |
 |------|-------------|
-| `build_tool` | Compile Rust code → WASM tool |
-| `register_script` | Register script with optional deps & annotations |
-| `create_skill` | Step-by-step guided creation |
-| `import_tool` | Import tools from git repos or GitHub gists |
-| `create_pipeline` | Create a pipeline that chains tools together *(v0.3.0+)* |
-| `list_pipelines` | List all pipeline tools *(v0.3.0+)* |
+| `build_tool` | Compile Rust code → WASM tool (with crate dependencies) |
+| `register_script` | Register script tool (Python, Node.js, etc.) with deps |
 | `call_tool` | Execute any tool (WASM, Script, or Pipeline) |
 | `list_tools` | List all available tools |
-| `complete` | Get autocomplete suggestions for arguments |
-| `execute_code` | Run code that composes multiple tools |
-| `install_deps` | Install dependencies for a tool |
 | `delete_tool` | Remove a tool and clean up |
-| `test_validate` | Validate Rust code before building |
+| `import_tool` | Import tools from Git repos or GitHub Gists |
+| `execute_code` | Run code that composes multiple tools |
+| `pipeline` | Create, list, delete pipeline tools (action-based) |
+| `memory` | Persistent storage for tools (store, get, list, delete, stats) |
 
 ---
 
 ## 💡 Quick Examples
 
-### Build a WASM Tool (Rust)
+<div align="center">
 
-```
+### 🔥 See Skillz in Action
+
+</div>
+
+### 🦀 Build a WASM Tool (Rust)
+
+```rust
 build_tool(
   name: "fibonacci",
   description: "Generates Fibonacci numbers",
@@ -187,9 +236,9 @@ build_tool(
 )
 ```
 
-### WASM Tool with Rust Dependencies
+### 🦀 WASM Tool with Rust Dependencies
 
-```
+```rust
 build_tool(
   name: "json_processor",
   description: "Process JSON with serde",
@@ -208,9 +257,9 @@ fn main() {
 )
 ```
 
-### Register a Script Tool (Python)
+### 🐍 Register a Script Tool (Python)
 
-```
+```python
 register_script(
   name: "word_counter",
   description: "Counts words in text",
@@ -236,9 +285,9 @@ print(json.dumps({'jsonrpc': '2.0', 'result': result, 'id': request['id']}))
 )
 ```
 
-### Tool with Dependencies
+### 📦 Tool with Dependencies
 
-```
+```python
 register_script(
   name: "data_analyzer",
   interpreter: "python3",
@@ -247,9 +296,9 @@ register_script(
 )
 ```
 
-### Import Tools from GitHub
+### 🌐 Import Tools from GitHub
 
-```
+```bash
 # Import from a git repository
 import_tool(
   source: "https://github.com/user/skillz-json-tools"
@@ -271,9 +320,9 @@ import_tool(
 )
 ```
 
-### Create a Pipeline (Chain Tools)
+### ⛓️ Create a Pipeline (Chain Tools)
 
-```
+```yaml
 # Pipelines are tools that chain other tools together!
 create_pipeline(
   name: "process_data",
@@ -289,13 +338,17 @@ create_pipeline(
 call_tool(tool_name: "process_data", arguments: { url: "https://api.example.com/data" })
 ```
 
-**Variable syntax in pipelines:**
+<details>
+<summary><b>📘 Variable syntax in pipelines</b></summary>
+
 - `$input.field` - Access pipeline input
 - `$prev` - Previous step's entire output
 - `$prev.field` - Access field from previous step
 - `$step_name.field` - Access field from a named step
 
-### Execute Multiple Tools via Code
+</details>
+
+### ⚡ Execute Multiple Tools via Code
 
 ```
 execute_code(
@@ -328,10 +381,19 @@ This pattern reduces token usage by **98%** (150k → 2k tokens)!
 Scripts communicate via JSON-RPC 2.0 over stdin/stdout:
 
 <div align="center">
-  <img src="docs/architecture.png" alt="Skillz Architecture Diagram" width="800">
+
+### 🏗️ Architecture Overview
+
+<img src="docs/architecture.png" alt="Skillz Architecture Diagram" width="800">
+
+*The diagram shows how scripts communicate with the Skillz host using JSON-RPC 2.0 protocol over stdin/stdout*
+
 </div>
 
 ### ⚠️ Important: Use `readline()` not `read()`
+
+> **⚠️ WARNING**  
+> Always use `readline()` to read JSON-RPC requests. Using `read()` will block waiting for EOF and cause timeouts!
 
 ```python
 # ✅ CORRECT - Returns immediately after reading the request
@@ -341,7 +403,7 @@ request = json.loads(sys.stdin.readline())
 request = json.loads(sys.stdin.read())
 ```
 
-### Python Template
+### 🐍 Python Template
 
 ```python
 #!/usr/bin/env python3
@@ -372,7 +434,7 @@ if __name__ == "__main__":
     main()
 ```
 
-### Node.js Template
+### 📗 Node.js Template
 
 ```javascript
 #!/usr/bin/env node
@@ -456,7 +518,9 @@ Annotations help clients understand tool behavior:
 
 Each tool is stored in its own directory with a shareable `manifest.json`:
 
-```
+<div align="center">
+
+```tree
 ~/tools/
 ├── fibonacci/
 │   ├── manifest.json     # Tool metadata
@@ -470,6 +534,10 @@ Each tool is stored in its own directory with a shareable `manifest.json`:
     ├── http_client.py
     └── env/              # Virtual environment
 ```
+
+💡 **Tools are fully shareable** - just copy the directory!
+
+</div>
 
 ### manifest.json Example
 
@@ -485,8 +553,6 @@ Each tool is stored in its own directory with a shareable `manifest.json`:
   "tags": ["json", "utility"]
 }
 ```
-
-Tools are **shareable** - just copy the directory!
 
 ---
 
@@ -505,9 +571,44 @@ Tools are **shareable** - just copy the directory!
 
 ## 🔒 Security
 
-### Sandbox Modes (Linux)
+<div align="center">
+
+### Platform Support
+
+![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat&logo=linux&logoColor=black)
+![macOS](https://img.shields.io/badge/macOS-000000?style=flat&logo=apple&logoColor=white)
+![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white)
+
+</div>
+
+### 🛡️ Sandbox Modes (Linux Only)
 
 Enable sandboxing via environment variable:
+
+<table>
+<tr>
+<th>Sandbox</th>
+<th>Security Level</th>
+<th>Features</th>
+</tr>
+<tr>
+<td>🟢 <b>bubblewrap</b></td>
+<td>Medium</td>
+<td>Namespace isolation</td>
+</tr>
+<tr>
+<td>🟡 <b>firejail</b></td>
+<td>High</td>
+<td>seccomp + namespaces</td>
+</tr>
+<tr>
+<td>🔴 <b>nsjail</b></td>
+<td>Very High</td>
+<td>Most restrictive</td>
+</tr>
+</table>
+
+**Configuration:**
 
 ```bash
 # Bubblewrap (namespace isolation)
@@ -523,7 +624,7 @@ export SKILLZ_SANDBOX=nsjail
 export SKILLZ_SANDBOX_NETWORK=1
 ```
 
-See [SECURITY.md](SECURITY.md) for full details.
+> 📖 See [SECURITY.md](SECURITY.md) for full details.
 
 ---
 
@@ -552,15 +653,19 @@ MIT License - see [LICENSE](LICENSE)
 
 ## 🔗 Links
 
-- **Crates.io**: [crates.io/crates/skillz](https://crates.io/crates/skillz)
-- **Docs**: [algiras.github.io/skillz](https://algiras.github.io/skillz)
-- **GitHub**: [github.com/Algiras/skillz](https://github.com/Algiras/skillz)
-- **MCP Spec**: [modelcontextprotocol.io](https://modelcontextprotocol.io)
+<div align="center">
+
+| Resource | Link |
+|----------|------|
+| 📦 **Crates.io** | [crates.io/crates/skillz](https://crates.io/crates/skillz) |
+| 📖 **Documentation** | [algiras.github.io/skillz](https://algiras.github.io/skillz) |
+| 💻 **GitHub** | [github.com/Algiras/skillz](https://github.com/Algiras/skillz) |
+| 📋 **MCP Spec** | [modelcontextprotocol.io](https://modelcontextprotocol.io) |
 
 ---
 
-<div align="center">
-
 **Built with ❤️ for AI-powered development**
+
+[![Star on GitHub](https://img.shields.io/github/stars/Algiras/skillz?style=social)](https://github.com/Algiras/skillz)
 
 </div>

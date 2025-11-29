@@ -957,10 +957,9 @@ cargo install skillz</code></pre>
                         that persists across restarts.</p>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">🔧</div>
-                    <h3>Sequential Creation</h3>
-                    <p>Build skills step-by-step with guided workflow: Design → Implement → Test → Finalize. Perfect for
-                        complex tools.</p>
+                    <div class="feature-icon">⛓️</div>
+                    <h3>Pipeline Tools</h3>
+                    <p>Chain tools together declaratively with variable resolution ($input, $prev, $step_name).</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">📡</div>
@@ -992,9 +991,9 @@ cargo install skillz</code></pre>
                     <p>Compose multiple tools via Python/JS code. Reduces token usage by 98% (150k → 2k tokens)!</p>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon">🔍</div>
-                    <h3>Completion API</h3>
-                    <p>Autocomplete suggestions for tool arguments. Helps AI provide correct values.</p>
+                    <div class="feature-icon">💬</div>
+                    <h3>Elicitation & Memory</h3>
+                    <p>Scripts can request user input via MCP elicitation and use persistent storage for state.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">📖</div>
@@ -1028,27 +1027,17 @@ cargo install skillz</code></pre>
                 <tbody>
                     <tr>
                         <td class="tool-name">build_tool</td>
-                        <td class="tool-desc">Compile Rust code → WASM tool. Automatically handles cargo build.</td>
+                        <td class="tool-desc">Compile Rust code → WASM tool with crate dependencies.</td>
                         <td><span class="tool-badge badge-core">Core</span></td>
                     </tr>
                     <tr>
                         <td class="tool-name">register_script</td>
-                        <td class="tool-desc">Register script tool with optional dependencies (pip/npm packages).</td>
-                        <td><span class="tool-badge badge-core">Core</span></td>
-                    </tr>
-                    <tr>
-                        <td class="tool-name">create_skill</td>
-                        <td class="tool-desc">Step-by-step skill creation: Design → Implement → Test → Finalize.</td>
-                        <td><span class="tool-badge badge-core">Core</span></td>
-                    </tr>
-                    <tr>
-                        <td class="tool-name">import_tool</td>
-                        <td class="tool-desc">Import tools from git repos or GitHub gists.</td>
+                        <td class="tool-desc">Register script tool (Python, Node.js, etc.) with dependencies.</td>
                         <td><span class="tool-badge badge-core">Core</span></td>
                     </tr>
                     <tr>
                         <td class="tool-name">call_tool</td>
-                        <td class="tool-desc">Execute any registered tool (WASM or script) by name.</td>
+                        <td class="tool-desc">Execute any registered tool (WASM, Script, or Pipeline).</td>
                         <td><span class="tool-badge badge-core">Core</span></td>
                     </tr>
                     <tr>
@@ -1057,28 +1046,28 @@ cargo install skillz</code></pre>
                         <td><span class="tool-badge badge-core">Core</span></td>
                     </tr>
                     <tr>
-                        <td class="tool-name">install_deps</td>
-                        <td class="tool-desc">Install dependencies for existing script tools.</td>
-                        <td><span class="tool-badge badge-new">New</span></td>
-                    </tr>
-                    <tr>
                         <td class="tool-name">delete_tool</td>
-                        <td class="tool-desc">Delete a tool and clean up its files and environments.</td>
-                        <td><span class="tool-badge badge-new">New</span></td>
+                        <td class="tool-desc">Delete a tool and clean up its files.</td>
+                        <td><span class="tool-badge badge-core">Core</span></td>
                     </tr>
                     <tr>
-                        <td class="tool-name">test_validate</td>
-                        <td class="tool-desc">Validate Rust code before building (syntax check).</td>
+                        <td class="tool-name">import_tool</td>
+                        <td class="tool-desc">Import tools from Git repos or GitHub Gists.</td>
                         <td><span class="tool-badge badge-core">Core</span></td>
                     </tr>
                     <tr>
                         <td class="tool-name">execute_code</td>
                         <td class="tool-desc">Run Python/JS code that composes multiple tools. 98% token savings!</td>
+                        <td><span class="tool-badge badge-core">Core</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">pipeline</td>
+                        <td class="tool-desc">Create, list, delete pipeline tools (action: create|list|delete).</td>
                         <td><span class="tool-badge badge-new">New</span></td>
                     </tr>
                     <tr>
-                        <td class="tool-name">complete</td>
-                        <td class="tool-desc">Get autocomplete suggestions for tool arguments.</td>
+                        <td class="tool-name">memory</td>
+                        <td class="tool-desc">Persistent storage for tools (action: store|get|list|delete|stats).</td>
                         <td><span class="tool-badge badge-new">New</span></td>
                     </tr>
                 </tbody>
@@ -1417,11 +1406,7 @@ sys.stdout.flush()
   <span class="string">description</span>: <span class="string">"HTTP client with requests library"</span>
 )
 
-<span class="comment"># Or install deps later</span>
-<span class="function">install_deps</span>(
-  <span class="string">tool_name</span>: <span class="string">"my_tool"</span>,
-  <span class="string">dependencies</span>: [<span class="string">"pandas"</span>, <span class="string">"numpy"</span>]
-)`
+<span class="comment"># Dependencies are auto-installed on first run</span>`
             },
             execute: {
                 icon: '⚡',
@@ -1452,25 +1437,25 @@ for i in range(3):
 )`
             },
             sequential: {
-                icon: '🔧',
-                name: 'Sequential Creation',
-                code: `<span class="comment">// Step 1: Design</span>
-<span class="function">create_skill</span>(
-  <span class="string">name</span>: <span class="string">"data_processor"</span>,
-  <span class="string">skill_type</span>: <span class="string">"script"</span>,
-  <span class="string">step</span>: <span class="number">1</span>,  <span class="comment">// design</span>
-  <span class="string">content</span>: <span class="string">"Tool that processes CSV data with pandas"</span>,
-  <span class="string">description</span>: <span class="string">"CSV data processor"</span>
+                icon: '⛓️',
+                name: 'Pipeline Tools',
+                code: `<span class="comment">// Create a pipeline that chains tools</span>
+<span class="function">pipeline</span>(
+  <span class="string">action</span>: <span class="string">"create"</span>,
+  <span class="string">name</span>: <span class="string">"data_pipeline"</span>,
+  <span class="string">description</span>: <span class="string">"Fetch, process, format data"</span>,
+  <span class="string">steps</span>: [
+    { <span class="string">name</span>: <span class="string">"fetch"</span>, <span class="string">tool</span>: <span class="string">"http_get"</span>, <span class="string">args</span>: { <span class="string">url</span>: <span class="string">"$input.url"</span> } },
+    { <span class="string">tool</span>: <span class="string">"json_parse"</span>, <span class="string">args</span>: { <span class="string">text</span>: <span class="string">"$fetch.body"</span> } },
+    { <span class="string">tool</span>: <span class="string">"format"</span>, <span class="string">args</span>: { <span class="string">data</span>: <span class="string">"$prev"</span> } }
+  ]
 )
 
-<span class="comment">// Step 2: Implement</span>
-<span class="function">create_skill</span>(step: <span class="number">2</span>, content: <span class="string">"...code..."</span>, ...)
+<span class="comment">// Run the pipeline</span>
+<span class="function">call_tool</span>(<span class="string">tool_name</span>: <span class="string">"data_pipeline"</span>, <span class="string">arguments</span>: { <span class="string">url</span>: <span class="string">"..."</span> })
 
-<span class="comment">// Step 3: Test</span>
-<span class="function">create_skill</span>(step: <span class="number">3</span>, content: <span class="string">"test results"</span>, ...)
-
-<span class="comment">// Step 4: Finalize</span>
-<span class="function">create_skill</span>(step: <span class="number">4</span>, content: <span class="string">"ready"</span>, ...)`
+<span class="comment">// List all pipelines</span>
+<span class="function">pipeline</span>(<span class="string">action</span>: <span class="string">"list"</span>)`
             }
         };
 

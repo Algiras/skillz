@@ -1,5 +1,6 @@
 mod builder;
 mod importer;
+mod memory;
 mod pipeline;
 mod registry;
 mod runtime;
@@ -11,11 +12,11 @@ use rmcp::schemars::JsonSchema;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        AnnotateAble, ListResourcesResult, PaginatedRequestParam, RawResource,
-        ReadResourceRequestParam, ReadResourceResult, ResourceContents, ServerCapabilities,
-        ServerInfo,
+        AnnotateAble, ListResourcesResult, LoggingLevel, LoggingMessageNotificationParam,
+        PaginatedRequestParam, ProgressNotificationParam, RawResource, ReadResourceRequestParam,
+        ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
     },
-    service::RequestContext,
+    service::{NotificationContext, RequestContext},
     tool, tool_handler, tool_router,
     transport::stdio,
     ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
@@ -60,16 +61,39 @@ struct Cli {
     host: String,
 }
 
+use rmcp::service::Peer;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+/// Shared peer reference for sending notifications
+type SharedPeer = Arc<RwLock<Option<Peer<RoleServer>>>>;
+
 // Define the state
+/// Stores actual MCP client capabilities
+#[derive(Debug, Clone, Default)]
+struct McpClientCapabilities {
+    sampling: bool,
+    elicitation: bool,
+    roots: bool,
+}
+
+type SharedClientCaps = Arc<RwLock<McpClientCapabilities>>;
+
 #[derive(Clone)]
 struct AppState {
     registry: registry::ToolRegistry,
     runtime: runtime::ToolRuntime,
+    memory: memory::Memory,
     tool_router: ToolRouter<Self>,
+    /// Shared peer for sending logging notifications
+    peer: SharedPeer,
+    /// Actual client capabilities from MCP initialization
+    client_caps: SharedClientCaps,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+/// Unified tool building/management
 struct BuildToolArgs {
     name: String,
     code: String,
@@ -89,6 +113,7 @@ struct BuildToolArgs {
     overwrite: Option<bool>,
 }
 
+/// Register a script tool
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct RegisterScriptArgs {
@@ -123,15 +148,6 @@ struct RegisterScriptArgs {
 
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-struct InstallDepsArgs {
-    /// Name of the tool to install dependencies for
-    tool_name: String,
-    /// Additional dependencies to install (optional, uses tool's configured deps if not provided)
-    dependencies: Option<Vec<String>>,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
 struct DeleteToolArgs {
     /// Name of the tool to delete
     tool_name: String,
@@ -144,46 +160,7 @@ struct CallToolArgs {
     arguments: Option<serde_json::Value>,
 }
 
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-struct TestValidateArgs {
-    code: String,
-    test_compile: Option<bool>,
-}
 
-/// Sequential skill creation - build tools step by step
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-struct CreateSkillArgs {
-    /// Name of the skill being created
-    name: String,
-    /// Description of what the skill does
-    description: String,
-    /// Current step in the creation process (1=design, 2=implement, 3=test, 4=finalize)
-    step: u32,
-    /// Step-specific content (design notes, code, test results, etc.)
-    content: String,
-    /// Type of skill: "wasm" for Rust/WASM or "script" for any language
-    skill_type: String,
-    /// For scripts: the interpreter (python3, node, bash, etc.)
-    interpreter: Option<String>,
-    /// Whether to proceed to next step automatically
-    auto_advance: Option<bool>,
-}
-
-/// Completion/autocomplete request for argument suggestions
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-struct CompleteArgs {
-    /// Reference type: "tool" for tool arguments, "resource" for resource URIs
-    ref_type: String,
-    /// Name of the tool or resource
-    ref_name: String,
-    /// Name of the argument to complete
-    argument_name: String,
-    /// Current partial value being typed
-    argument_value: String,
-}
 
 /// Code execution mode - compose multiple tools via code
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -213,7 +190,7 @@ struct ImportToolArgs {
 }
 
 /// A step in a pipeline
-#[derive(Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 struct PipelineStepArg {
     /// Optional name for referencing this step's output (e.g., "fetch_data")
@@ -228,44 +205,177 @@ struct PipelineStepArg {
     condition: Option<String>,
 }
 
-/// Create a reusable pipeline
+/// Unified pipeline management
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-struct CreatePipelineArgs {
-    /// Pipeline name (used to run it later)
-    name: String,
-    /// Description of what the pipeline does
+struct PipelineArgs {
+    /// Action: 'create', 'list', 'delete', 'run'
+    action: String,
+    /// Pipeline name (required for create/delete/run)
+    name: Option<String>,
+    /// Description of what the pipeline does (for create)
     description: Option<String>,
-    /// Steps to execute in order
-    steps: Vec<PipelineStepArg>,
-    /// Tags for organization
+    /// Steps to execute in order (for create)
+    steps: Option<Vec<PipelineStepArg>>,
+    /// Tags for organization (for create/list filter)
     tags: Option<Vec<String>>,
-}
-
-/// Run a saved pipeline
-/// List all pipelines
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-struct ListPipelinesArgs {
-    /// Filter by tag
+    /// Filter by tag (for list)
     tag: Option<String>,
 }
 
-/// Delete a pipeline
+// ==================== Memory Args ====================
+
+/// Unified memory management - combines get, set, list, clear, stats
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-struct DeletePipelineArgs {
-    /// Name of the pipeline to delete
-    name: String,
+struct MemoryArgs {
+    /// Action: 'store', 'get', 'update', 'delete', 'list'
+    action: String,
+    /// Tool name (namespace for isolation)
+    tool_name: String,
+    /// Key to retrieve or store (required for get/store/delete)
+    key: Option<String>,
+    /// Value to store (any JSON value) - required for store action
+    value: Option<serde_json::Value>,
 }
 
 impl AppState {
-    fn new(registry: registry::ToolRegistry, runtime: runtime::ToolRuntime) -> Self {
+    fn new(registry: registry::ToolRegistry, mut runtime: runtime::ToolRuntime, memory: memory::Memory) -> Self {
+        let peer: SharedPeer = Arc::new(RwLock::new(None));
+        
+        // Set up logging handler that forwards to MCP peer
+        let peer_for_logging = peer.clone();
+        let logging_handler: runtime::LoggingHandler = Arc::new(move |level, message, data| {
+            let peer = peer_for_logging.clone();
+            Box::pin(async move {
+                if let Some(ref p) = *peer.read().await {
+                    let mcp_level = match level.to_lowercase().as_str() {
+                        "debug" => LoggingLevel::Debug,
+                        "info" => LoggingLevel::Info,
+                        "warning" | "warn" => LoggingLevel::Warning,
+                        "error" => LoggingLevel::Error,
+                        _ => LoggingLevel::Info,
+                    };
+                    
+                    let log_data = data.unwrap_or_else(|| serde_json::json!({"message": message}));
+                    let _ = p.notify_logging_message(LoggingMessageNotificationParam {
+                        level: mcp_level,
+                        logger: Some("skillz".to_string()),
+                        data: log_data,
+                    }).await;
+                }
+            })
+        });
+        
+        // Set up progress handler that forwards to MCP peer  
+        let peer_for_progress = peer.clone();
+        let progress_handler: runtime::ProgressHandler = Arc::new(move |current, total, message| {
+            let peer = peer_for_progress.clone();
+            Box::pin(async move {
+                if let Some(ref p) = *peer.read().await {
+                    let _ = p.notify_progress(ProgressNotificationParam {
+                        progress_token: rmcp::model::ProgressToken(
+                            rmcp::model::NumberOrString::String("tool_progress".into())
+                        ),
+                        progress: current as f64 / total as f64 * 100.0,
+                        total: Some(100.0),
+                        message,
+                    }).await;
+                }
+            })
+        });
+        
+        // Set up elicitation handler that forwards to MCP peer
+        let peer_for_elicit = peer.clone();
+        let elicitation_handler: runtime::ElicitationHandler = Arc::new(move |message, schema| {
+            let peer = peer_for_elicit.clone();
+            Box::pin(async move {
+                if let Some(ref p) = *peer.read().await {
+                    // Convert JSON schema to ElicitationSchema
+                    let schema_obj = match schema.as_object() {
+                        Some(obj) => obj.clone(),
+                        None => return Ok(serde_json::json!({"action": "error", "error": "Schema must be a JSON object"})),
+                    };
+                    let elicit_schema = match rmcp::model::ElicitationSchema::from_json_schema(schema_obj) {
+                        Ok(s) => s,
+                        Err(e) => return Ok(serde_json::json!({"action": "error", "error": format!("Invalid schema: {}", e)})),
+                    };
+                    
+                    // Forward elicitation request to MCP client
+                    match p.create_elicitation(rmcp::model::CreateElicitationRequestParam {
+                        message,
+                        requested_schema: elicit_schema,
+                    }).await {
+                        Ok(result) => {
+                            Ok(serde_json::json!({
+                                "action": match result.action {
+                                    rmcp::model::ElicitationAction::Accept => "accept",
+                                    rmcp::model::ElicitationAction::Decline => "decline",
+                                    rmcp::model::ElicitationAction::Cancel => "cancel",
+                                },
+                                "content": result.content
+                            }))
+                        }
+                        Err(e) => Ok(serde_json::json!({"action": "error", "error": e.to_string()}))
+                    }
+                } else {
+                    Ok(serde_json::json!({"action": "error", "error": "No MCP peer available"}))
+                }
+            })
+        });
+
+        // Set up sampling handler that forwards to MCP peer
+        let peer_for_sampling = peer.clone();
+        let sampling_handler: runtime::SamplingHandler = Arc::new(move |params| {
+            let peer = peer_for_sampling.clone();
+            Box::pin(async move {
+                if let Some(ref p) = *peer.read().await {
+                    // Parse the params into CreateMessageRequestParam
+                    let request: rmcp::model::CreateMessageRequestParam = 
+                        serde_json::from_value(params).map_err(|e| anyhow::anyhow!("Invalid params: {}", e))?;
+                    
+                    match p.create_message(request).await {
+                        Ok(result) => Ok(serde_json::to_value(result)?),
+                        Err(e) => Ok(serde_json::json!({"error": e.to_string()}))
+                    }
+                } else {
+                    Ok(serde_json::json!({"error": "No MCP peer available"}))
+                }
+            })
+        });
+
+        // Configure runtime with handlers
+        runtime = runtime
+            .with_logging_handler(logging_handler)
+            .with_progress_handler(progress_handler)
+            .with_elicitation_handler(elicitation_handler)
+            .with_sampling_handler(sampling_handler);
+        
         Self {
             registry,
             runtime,
+            memory,
             tool_router: Self::tool_router(),
+            peer,
+            client_caps: Arc::new(RwLock::new(McpClientCapabilities::default())),
         }
+    }
+    
+    /// Update the peer reference (called when we get a context)
+    async fn update_peer(&self, new_peer: Peer<RoleServer>) {
+        let mut peer = self.peer.write().await;
+        *peer = Some(new_peer);
+    }
+    
+    /// Update client capabilities from MCP initialization
+    async fn update_client_caps(&self, caps: McpClientCapabilities) {
+        let mut client_caps = self.client_caps.write().await;
+        *client_caps = caps;
+    }
+    
+    /// Get current client capabilities
+    async fn get_client_caps(&self) -> McpClientCapabilities {
+        self.client_caps.read().await.clone()
     }
 }
 
@@ -278,7 +388,7 @@ impl AppState {
     )]
     async fn build_tool(&self, Parameters(args): Parameters<BuildToolArgs>) -> String {
         eprintln!("Building WASM tool: {}", args.name);
-
+        
         // Check if tool exists
         if self.registry.get_tool(&args.name).is_some() && !args.overwrite.unwrap_or(false) {
             return format!(
@@ -298,9 +408,9 @@ impl AppState {
                     Ok(bytes) => bytes,
                     Err(e) => return format!("Error reading compiled WASM: {}", e),
                 },
-                Err(e) => return format!("Compilation error: {}", e),
-            };
-
+            Err(e) => return format!("Compilation error: {}", e),
+        };
+        
         // Build manifest
         let mut manifest = registry::ToolManifest::new(
             args.name.clone(),
@@ -346,7 +456,16 @@ impl AppState {
     // ==================== SCRIPT TOOLS (Any Language) ====================
 
     #[tool(
-        description = "Register a script tool in any language (Python, Node.js, Ruby, Bash, etc.). Scripts communicate via JSON-RPC 2.0 over stdin/stdout. CRITICAL: Use sys.stdin.readline() NOT sys.stdin.read() in Python scripts - read() blocks forever! Always call sys.stdout.flush() after printing the response."
+        description = r#"Register a script tool in any language (Python, Node.js, Ruby, Bash, etc.). Scripts communicate via JSON-RPC 2.0 over stdin/stdout. CRITICAL: Use sys.stdin.readline() NOT sys.stdin.read() in Python scripts - read() blocks forever! Always call sys.stdout.flush() after printing.
+
+Bidirectional Features (scripts can REQUEST from host):
+- **Elicitation**: Request user input via {"jsonrpc":"2.0","method":"elicitation/create","params":{"message":"prompt","requestedSchema":{"type":"object","properties":{"field":{"type":"string"}}}},"id":1}
+- **Sampling**: Request LLM completion via {"jsonrpc":"2.0","method":"sampling/createMessage","params":{"messages":[{"role":"user","content":{"type":"text","text":"prompt"}}],"maxTokens":100},"id":1}
+- **Memory**: Store/retrieve state via memory/set, memory/get, memory/list
+- **Logging**: Send logs via {"jsonrpc":"2.0","method":"logging/message","params":{"level":"info","message":"text"}}
+- **Progress**: Report progress via {"jsonrpc":"2.0","method":"progress/update","params":{"current":1,"total":10,"message":"step"}}
+
+Note: Check context.capabilities before using elicitation/sampling - not all clients support them."#
     )]
     async fn register_script(&self, Parameters(args): Parameters<RegisterScriptArgs>) -> String {
         eprintln!("Registering script tool: {}", args.name);
@@ -427,52 +546,6 @@ impl AppState {
         }
     }
 
-    // ==================== DEPENDENCY MANAGEMENT ====================
-
-    #[tool(
-        description = "Install dependencies for a script tool. Supports pip (Python) and npm (Node.js)."
-    )]
-    async fn install_deps(&self, Parameters(args): Parameters<InstallDepsArgs>) -> String {
-        eprintln!("Installing dependencies for: {}", args.tool_name);
-
-        let tool = match self.registry.get_tool(&args.tool_name) {
-            Some(t) => t,
-            None => return format!("Error: Tool '{}' not found", args.tool_name),
-        };
-
-        if *tool.tool_type() != ToolType::Script {
-            return "Error: Dependency installation only supported for script tools".to_string();
-        }
-
-        let deps = args
-            .dependencies
-            .unwrap_or_else(|| tool.dependencies().to_vec());
-
-        if deps.is_empty() {
-            return "No dependencies to install".to_string();
-        }
-
-        let env_path = self.registry.tool_env_path(&args.tool_name);
-
-        match runtime::install_tool_deps(&env_path, tool.interpreter(), &deps) {
-            Ok(result) => {
-                if result.success {
-                    // Update tool config
-                    if let Err(e) = self.registry.mark_deps_installed(&args.tool_name) {
-                        return format!("Deps installed but failed to update config: {}", e);
-                    }
-                    format!(
-                        "✅ Dependencies installed successfully!\n\n{}",
-                        result.message
-                    )
-                } else {
-                    format!("❌ Installation failed:\n\n{}", result.message)
-                }
-            }
-            Err(e) => format!("❌ Installation error: {}", e),
-        }
-    }
-
     #[tool(description = "Delete a registered tool and clean up its files")]
     async fn delete_tool(&self, Parameters(args): Parameters<DeleteToolArgs>) -> String {
         match self.registry.delete_tool(&args.tool_name) {
@@ -487,14 +560,15 @@ impl AppState {
     #[tool(
         description = "Call a registered tool (WASM or Script). For script tools, arguments are passed via JSON-RPC 2.0."
     )]
+    #[doc = "NOTE: This tool can ONLY call tools registered within Skillz, not tools from other MCP servers."]
     async fn call_tool(&self, Parameters(args): Parameters<CallToolArgs>) -> String {
         eprintln!("Calling tool: {}", args.tool_name);
-
+        
         let tool = match self.registry.get_tool(&args.tool_name) {
             Some(t) => t,
             None => return format!("Error: Tool '{}' not found", args.tool_name),
         };
-
+        
         let tool_args = args.arguments.unwrap_or(serde_json::json!({}));
 
         // Handle pipeline tools specially
@@ -503,7 +577,15 @@ impl AppState {
         }
 
         let tool_config = tool.clone();
-        let runtime = self.runtime.clone();
+        let mut runtime = self.runtime.clone();
+        
+        // Update runtime with actual MCP client capabilities
+        let mcp_caps = self.get_client_caps().await;
+        runtime.update_capabilities(runtime::ClientCapabilities {
+            sampling: mcp_caps.sampling,
+            elicitation: mcp_caps.elicitation,
+            memory: true, // Memory is always available (server-side)
+        });
 
         // Use spawn_blocking for sync operations
         match tokio::task::spawn_blocking(move || runtime.call_tool(&tool_config, tool_args)).await
@@ -730,353 +812,12 @@ impl AppState {
         output
     }
 
-    // ==================== VALIDATION ====================
-
-    #[tool(description = "Validate Rust code using sequential analysis before building")]
-    async fn test_validate(&self, Parameters(args): Parameters<TestValidateArgs>) -> String {
-        eprintln!("Validating code with sequential analysis...");
-
-        let mut steps = Vec::new();
-        let mut issues: Vec<String> = Vec::new();
-
-        // Step 1: Check for main function
-        steps.push("Step 1: Checking for main() function");
-        if !args.code.contains("fn main()") {
-            issues.push("❌ Missing 'fn main()' entry point".to_string());
-        } else {
-            steps.push("  ✓ Found main() function");
-        }
-
-        // Step 2: Check for basic syntax issues
-        steps.push("Step 2: Checking basic syntax");
-        let brace_open = args.code.matches('{').count();
-        let brace_close = args.code.matches('}').count();
-        if brace_open != brace_close {
-            issues.push(format!(
-                "❌ Mismatched braces: {} open, {} close",
-                brace_open, brace_close
-            ));
-        } else {
-            steps.push("  ✓ Braces are balanced");
-        }
-
-        // Step 3: Check for unsafe code
-        steps.push("Step 3: Checking for unsafe code");
-        if args.code.contains("unsafe") {
-            issues.push("⚠️  Contains unsafe code - use with caution".to_string());
-        } else {
-            steps.push("  ✓ No unsafe code detected");
-        }
-
-        // Step 4: Optional compile test
-        if args.test_compile.unwrap_or(false) {
-            steps.push("Step 4: Test compilation");
-            match builder::Builder::compile_tool("validation_test", &args.code) {
-                Ok(_) => steps.push("  ✓ Code compiles successfully"),
-                Err(e) => issues.push(format!("❌ Compilation failed: {}", e)),
-            }
-        }
-
-        // Build report
-        let mut report = String::from("🔍 Sequential Validation Report\n\n");
-        for step in &steps {
-            report.push_str(&format!("{}\n", step));
-        }
-
-        report.push_str("\n📊 Summary:\n");
-        if issues.is_empty() {
-            report.push_str("✅ All checks passed! Code is ready to build.\n");
-        } else {
-            report.push_str(&format!("⚠️  Found {} issue(s):\n", issues.len()));
-            for issue in &issues {
-                report.push_str(&format!("   {}\n", issue));
-            }
-        }
-
-        report
-    }
-
-    // ==================== SEQUENTIAL SKILL CREATION ====================
-
-    #[tool(description = r#"Create skills step-by-step with guided workflow.
-
-Steps:
-1. **Design** - Define what the skill does, inputs, outputs
-2. **Implement** - Write the actual code (Rust for WASM, any language for scripts)
-3. **Test** - Validate the code compiles/runs correctly
-4. **Finalize** - Register the skill and make it available
-
-Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc.
-
-CRITICAL for Python scripts: Use sys.stdin.readline() NOT sys.stdin.read()! read() blocks forever. Always call sys.stdout.flush() after printing."#)]
-    async fn create_skill(&self, Parameters(args): Parameters<CreateSkillArgs>) -> String {
-        let step_name = match args.step {
-            1 => "📋 Design",
-            2 => "💻 Implement",
-            3 => "🧪 Test",
-            4 => "✅ Finalize",
-            _ => "❓ Unknown",
-        };
-
-        let mut output = format!("## {} Skill: `{}`\n\n", step_name, args.name);
-        output.push_str(&format!("**Step {}/4:** {}\n\n", args.step, step_name));
-        output.push_str(&format!(
-            "**Type:** {}\n",
-            if args.skill_type == "wasm" {
-                "🦀 WASM (Rust)"
-            } else {
-                "📜 Script"
-            }
-        ));
-        if let Some(ref interp) = args.interpreter {
-            output.push_str(&format!("**Interpreter:** {}\n", interp));
-        }
-        output.push_str(&format!("**Description:** {}\n\n", args.description));
-        output.push_str("---\n\n");
-
-        match args.step {
-            1 => {
-                // Design phase - just capture the design
-                output.push_str("### Design Notes\n\n");
-                output.push_str(&args.content);
-                output.push_str("\n\n---\n\n");
-                output.push_str("✅ Design captured. Next: Call with step=2 to implement.\n");
-            }
-            2 => {
-                // Implement phase - validate and prepare code
-                output.push_str("### Implementation\n\n```\n");
-                output.push_str(&args.content);
-                output.push_str("\n```\n\n");
-
-                if args.skill_type == "wasm" {
-                    // Basic Rust validation
-                    if !args.content.contains("fn main()") {
-                        output.push_str(
-                            "⚠️ Warning: No `fn main()` found. WASM tools need a main function.\n",
-                        );
-                    } else {
-                        output.push_str("✅ Code looks valid. Next: Call with step=3 to test.\n");
-                    }
-                } else {
-                    output.push_str("✅ Script captured. Next: Call with step=3 to test.\n");
-                }
-            }
-            3 => {
-                // Test phase - actually try to build/validate
-                output.push_str("### Testing\n\n");
-
-                if args.skill_type == "wasm" {
-                    match builder::Builder::compile_tool(
-                        &format!("{}_test", args.name),
-                        &args.content,
-                    ) {
-                        Ok(_) => {
-                            output.push_str("✅ **Compilation successful!**\n\n");
-                            output.push_str("Code compiles to WASM without errors.\n");
-                            output.push_str("Next: Call with step=4 to finalize and register.\n");
-                        }
-                        Err(e) => {
-                            output.push_str(&format!(
-                                "❌ **Compilation failed:**\n\n```\n{}\n```\n\n",
-                                e
-                            ));
-                            output.push_str("Fix the errors and call step=3 again.\n");
-                        }
-                    }
-                } else {
-                    // For scripts, just validate JSON-RPC structure
-                    if args.content.contains("jsonrpc") && args.content.contains("result") {
-                        output.push_str("✅ **Script looks valid!**\n\n");
-                        output.push_str("Contains JSON-RPC structure.\n");
-                        output.push_str("Next: Call with step=4 to finalize and register.\n");
-                    } else {
-                        output.push_str(
-                            "⚠️ **Warning:** Script may not follow JSON-RPC 2.0 protocol.\n",
-                        );
-                        output.push_str(
-                            "Ensure it reads JSON from stdin and outputs JSON response.\n",
-                        );
-                        output.push_str("See `skillz://protocol` for details.\n");
-                    }
-                }
-            }
-            4 => {
-                // Finalize - actually register the tool
-                output.push_str("### Finalizing\n\n");
-
-                if args.skill_type == "wasm" {
-                    // Build and register WASM tool
-                    let wasm_bytes = match builder::Builder::compile_tool(&args.name, &args.content)
-                    {
-                        Ok(path) => match std::fs::read(&path) {
-                            Ok(bytes) => bytes,
-                            Err(e) => return format!("❌ Failed to read WASM: {}", e),
-                        },
-                        Err(e) => return format!("❌ Failed to compile: {}", e),
-                    };
-
-                    let manifest = registry::ToolManifest::new(
-                        args.name.clone(),
-                        args.description.clone(),
-                        ToolType::Wasm,
-                    );
-
-                    match self.registry.register_tool(manifest, &wasm_bytes) {
-                        Ok(config) => {
-                            output.push_str(&format!(
-                                "🎉 **Skill `{}` created successfully!**\n\n",
-                                args.name
-                            ));
-                            output.push_str("**Type:** 🦀 WASM Tool\n");
-                            output.push_str(&format!(
-                                "**Directory:** {}\n",
-                                config.tool_dir.display()
-                            ));
-                            output.push_str(&format!(
-                                "**Usage:** `call_tool(tool_name: \"{}\")`\n",
-                                args.name
-                            ));
-                        }
-                        Err(e) => return format!("❌ Failed to register: {}", e),
-                    }
-                } else {
-                    // Register script tool
-                    let mut manifest = registry::ToolManifest::new(
-                        args.name.clone(),
-                        args.description.clone(),
-                        ToolType::Script,
-                    );
-                    manifest.interpreter = args.interpreter.clone();
-
-                    match self
-                        .registry
-                        .register_tool(manifest, args.content.as_bytes())
-                    {
-                        Ok(config) => {
-                            output.push_str(&format!(
-                                "🎉 **Skill `{}` created successfully!**\n\n",
-                                args.name
-                            ));
-                            output.push_str(&format!(
-                                "**Type:** 📜 Script ({})\n",
-                                args.interpreter
-                                    .clone()
-                                    .unwrap_or_else(|| "executable".to_string())
-                            ));
-                            output.push_str(&format!(
-                                "**Directory:** {}\n",
-                                config.tool_dir.display()
-                            ));
-                            output.push_str(&format!(
-                                "**Usage:** `call_tool(tool_name: \"{}\")`\n",
-                                args.name
-                            ));
-                        }
-                        Err(e) => return format!("❌ Failed to register: {}", e),
-                    }
-                }
-            }
-            _ => {
-                output.push_str("❌ Invalid step. Use 1-4.\n");
-            }
-        }
-
-        output
-    }
-
-    // ==================== COMPLETION API ====================
-
-    #[tool(
-        description = "Get autocomplete suggestions for tool arguments. Returns possible values for a specific argument."
-    )]
-    async fn complete(&self, Parameters(args): Parameters<CompleteArgs>) -> String {
-        let mut suggestions: Vec<String> = Vec::new();
-
-        match args.ref_type.as_str() {
-            "tool" => {
-                // Get tool and check if argument exists in schema
-                if let Some(tool) = self.registry.get_tool(&args.ref_name) {
-                    match args.argument_name.as_str() {
-                        "tool_name" => {
-                            // Suggest available tool names
-                            suggestions = self
-                                .registry
-                                .list_tools()
-                                .iter()
-                                .filter(|t| t.name().starts_with(&args.argument_value))
-                                .map(|t| t.name().to_string())
-                                .take(10)
-                                .collect();
-                        }
-                        "interpreter" => {
-                            // Suggest common interpreters
-                            let interpreters = [
-                                "python3", "python", "node", "nodejs", "ruby", "bash", "sh",
-                                "perl", "php",
-                            ];
-                            suggestions = interpreters
-                                .iter()
-                                .filter(|i| i.starts_with(&args.argument_value))
-                                .map(|s| s.to_string())
-                                .collect();
-                        }
-                        "language" => {
-                            // Suggest languages for execute_code
-                            let languages = ["python", "javascript", "typescript"];
-                            suggestions = languages
-                                .iter()
-                                .filter(|l| l.starts_with(&args.argument_value))
-                                .map(|s| s.to_string())
-                                .collect();
-                        }
-                        _ => {
-                            // Check tool's input schema for enum values
-                            if let Some(props) = &tool.input_schema().properties {
-                                if let Some(prop) = props.get(&args.argument_name) {
-                                    if let Some(enum_values) = prop.get("enum") {
-                                        if let Some(arr) = enum_values.as_array() {
-                                            suggestions = arr
-                                                .iter()
-                                                .filter_map(|v| v.as_str())
-                                                .filter(|s| s.starts_with(&args.argument_value))
-                                                .map(|s| s.to_string())
-                                                .take(10)
-                                                .collect();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            "resource" => {
-                // Suggest resource URIs
-                let resources = ["skillz://guide", "skillz://examples", "skillz://protocol"];
-                suggestions = resources
-                    .iter()
-                    .filter(|r| r.starts_with(&args.argument_value))
-                    .map(|s| s.to_string())
-                    .collect();
-            }
-            _ => {}
-        }
-
-        serde_json::json!({
-            "completion": {
-                "values": suggestions,
-                "total": suggestions.len(),
-                "hasMore": false
-            }
-        })
-        .to_string()
-    }
-
     // ==================== CODE EXECUTION MODE ====================
 
     #[tool(
         description = "Execute code that can call multiple registered tools. Dramatically reduces token usage by composing tools in code instead of sequential calls. Supports Python (default) and JavaScript."
     )]
+    #[doc = "NOTE: This tool can ONLY access tools registered within Skillz, not tools from other MCP servers."]
     async fn execute_code(&self, Parameters(args): Parameters<ExecuteCodeArgs>) -> String {
         let language = args.language.as_deref().unwrap_or("python");
         let _timeout = args.timeout.unwrap_or(30); // TODO: Implement timeout
@@ -1218,161 +959,210 @@ CRITICAL for Python scripts: Use sys.stdin.readline() NOT sys.stdin.read()! read
     // ==================== PIPELINES ====================
 
     #[tool(
-        description = r#"Create a reusable pipeline that chains tools together. Steps run in order, with outputs available to subsequent steps.
+        description = r#"Create and manage pipeline tools. Pipelines chain tools together with outputs available to subsequent steps.
 
-Variable syntax:
+Actions: 'create', 'list', 'delete'
+
+NOTE: Pipelines can ONLY use Skillz's own registered tools, not tools from other MCP servers.
+
+Variable syntax (for create):
 - $input.field - Access pipeline input
 - $prev - Previous step's entire output
 - $prev.field - Access field from previous step
 - $step_name.field - Access field from a named step
 
 Example:
-create_pipeline(
-  name: "analyze_and_report",
-  steps: [
+pipeline(action: "create", name: "my_pipeline", steps: [
     { name: "fetch", tool: "http_get", args: { url: "$input.url" } },
-    { tool: "analyze_text", args: { text: "$fetch.body" } },
-    { tool: "format_report", args: { data: "$prev" } }
-  ]
-)"#
+    { tool: "analyze", args: { text: "$fetch.body" } }
+])"#
     )]
-    async fn create_pipeline(&self, Parameters(args): Parameters<CreatePipelineArgs>) -> String {
-        eprintln!("Creating pipeline: {}", args.name);
+    async fn pipeline(&self, Parameters(args): Parameters<PipelineArgs>) -> String {
+        match args.action.as_str() {
+            "create" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "Error: 'name' is required for create action".to_string(),
+                };
+                let steps = match &args.steps {
+                    Some(s) => s.clone(),
+                    None => return "Error: 'steps' is required for create action".to_string(),
+                };
 
-        // Check if tool already exists
-        if self.registry.get_tool(&args.name).is_some() {
-            return format!(
-                "❌ A tool named '{}' already exists. Choose a different name.",
-                args.name
-            );
-        }
+                eprintln!("Creating pipeline: {}", name);
 
-        // Validate steps reference existing tools
-        for (i, step) in args.steps.iter().enumerate() {
-            if self.registry.get_tool(&step.tool).is_none() {
-                // Check if it's a built-in tool
-                let built_in_tools = [
-                    "build_tool",
-                    "register_script",
-                    "create_skill",
-                    "import_tool",
-                    "call_tool",
-                    "list_tools",
-                    "complete",
-                    "execute_code",
-                    "install_deps",
-                    "delete_tool",
-                    "test_validate",
-                    "create_pipeline",
-                    "list_pipelines",
-                    "delete_pipeline",
-                ];
-                if !built_in_tools.contains(&step.tool.as_str()) {
+                // Check if tool already exists
+                if self.registry.get_tool(&name).is_some() {
                     return format!(
-                        "❌ Step {} references unknown tool '{}'. Create or import it first.",
-                        i + 1,
-                        step.tool
+                        "❌ A tool named '{}' already exists. Choose a different name.",
+                        name
                     );
                 }
-            }
-        }
 
-        // Convert to registry PipelineStep
-        let steps: Vec<registry::PipelineStep> = args
-            .steps
-            .into_iter()
-            .map(|s| registry::PipelineStep {
-                name: s.name,
-                tool: s.tool,
-                args: s.args.unwrap_or(serde_json::json!({})),
-                continue_on_error: s.continue_on_error.unwrap_or(false),
-                condition: s.condition,
-            })
-            .collect();
-
-        // Create pipeline manifest
-        let mut manifest = registry::ToolManifest::new_pipeline(
-            args.name.clone(),
-            args.description.unwrap_or_default(),
-            steps,
-        );
-        manifest.tags = args.tags.unwrap_or_default();
-
-        match self.registry.register_tool(manifest, &[]) {
-            Ok(_) => {
-                format!(
-                    "✅ **Pipeline '{}' Created**\n\n\
-                    Pipelines are tools! Use:\n\
-                    - `call_tool(tool_name: \"{}\", arguments: {{...}})` to run it\n\
-                    - `list_tools` to see all tools including pipelines\n\
-                    - `delete_tool` to remove it",
-                    args.name, args.name
-                )
-            }
-            Err(e) => format!("❌ Failed to create pipeline: {}", e),
-        }
-    }
-
-    #[tool(description = "List all pipeline tools. Optionally filter by tag.")]
-    async fn list_pipelines(&self, Parameters(args): Parameters<ListPipelinesArgs>) -> String {
-        let all_tools = self.registry.list_tools();
-        let pipelines: Vec<_> = all_tools
-            .iter()
-            .filter(|t| *t.tool_type() == ToolType::Pipeline)
-            .collect();
-
-        let filtered: Vec<_> = if let Some(ref tag) = args.tag {
-            pipelines
-                .into_iter()
-                .filter(|p| p.manifest.tags.contains(tag))
-                .collect()
-        } else {
-            pipelines
-        };
-
-        if filtered.is_empty() {
-            return "📭 No pipelines found. Create one with `create_pipeline`.".to_string();
-        }
-
-        let mut output = format!("## 📋 Pipelines ({})\n\n", filtered.len());
-
-        for p in filtered {
-            output.push_str(&format!(
-                "### {}\n- **Description:** {}\n- **Steps:** {}\n- **Tags:** {}\n\n",
-                p.name(),
-                if p.description().is_empty() {
-                    "(none)"
-                } else {
-                    p.description()
-                },
-                p.pipeline_steps().len(),
-                if p.manifest.tags.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    p.manifest.tags.join(", ")
+                // Validate steps reference existing tools
+                for (i, step) in steps.iter().enumerate() {
+                    if self.registry.get_tool(&step.tool).is_none() {
+                        let built_in_tools = [
+                            "build_tool", "register_script", "create_skill", "import_tool",
+                            "call_tool", "list_tools", "complete", "execute_code",
+                            "install_deps", "delete_tool", "test_validate", "pipeline", "memory",
+                        ];
+                        if !built_in_tools.contains(&step.tool.as_str()) {
+                            return format!(
+                                "❌ Step {} references unknown tool '{}'. Create or import it first.",
+                                i + 1, step.tool
+                            );
+                        }
+                    }
                 }
-            ));
-        }
 
-        output
+                // Convert to registry PipelineStep
+                let reg_steps: Vec<registry::PipelineStep> = steps
+                    .iter()
+                    .map(|s| registry::PipelineStep {
+                        name: s.name.clone(),
+                        tool: s.tool.clone(),
+                        args: s.args.clone().unwrap_or(serde_json::json!({})),
+                        continue_on_error: s.continue_on_error.unwrap_or(false),
+                        condition: s.condition.clone(),
+                    })
+                    .collect();
+
+                let mut manifest = registry::ToolManifest::new_pipeline(
+                    name.clone(),
+                    args.description.unwrap_or_default(),
+                    reg_steps,
+                );
+                manifest.tags = args.tags.unwrap_or_default();
+
+                match self.registry.register_tool(manifest, &[]) {
+                    Ok(_) => format!(
+                        "✅ **Pipeline '{}' Created**\n\nUse `call_tool(tool_name: \"{}\")` to run it",
+                        name, name
+                    ),
+                    Err(e) => format!("❌ Failed to create pipeline: {}", e),
+                }
+            }
+            "list" => {
+                let all_tools = self.registry.list_tools();
+                let pipelines: Vec<_> = all_tools
+                    .iter()
+                    .filter(|t| *t.tool_type() == ToolType::Pipeline)
+                    .collect();
+
+                let filtered: Vec<_> = if let Some(ref tag) = args.tag {
+                    pipelines.into_iter().filter(|p| p.manifest.tags.contains(tag)).collect()
+                } else {
+                    pipelines
+                };
+
+                if filtered.is_empty() {
+                    return "📭 No pipelines found. Create one with `pipeline(action: \"create\", ...)`.".to_string();
+                }
+
+                let mut output = format!("## 📋 Pipelines ({})\n\n", filtered.len());
+                for p in filtered {
+                    output.push_str(&format!(
+                        "### {}\n- **Description:** {}\n- **Steps:** {}\n- **Tags:** {}\n\n",
+                        p.name(),
+                        if p.description().is_empty() { "(none)" } else { p.description() },
+                        p.pipeline_steps().len(),
+                        if p.manifest.tags.is_empty() { "(none)".to_string() } else { p.manifest.tags.join(", ") }
+                    ));
+                }
+                output
+            }
+            "delete" => {
+                let name = match &args.name {
+                    Some(n) => n,
+                    None => return "Error: 'name' is required for delete action".to_string(),
+                };
+
+                if let Some(tool) = self.registry.get_tool(name) {
+                    if *tool.tool_type() != ToolType::Pipeline {
+                        return format!("⚠️ '{}' is not a pipeline. Use delete_tool instead.", name);
+                    }
+                }
+
+                match self.registry.delete_tool(name) {
+                    Ok(true) => format!("🗑️ Pipeline '{}' deleted successfully", name),
+                    Ok(false) => format!("⚠️ Pipeline '{}' not found", name),
+                    Err(e) => format!("❌ Failed to delete pipeline: {}", e),
+                }
+            }
+            _ => format!("Unknown action: '{}'. Use: create, list, delete", args.action),
+        }
     }
 
-    #[tool(description = "Delete a pipeline (same as delete_tool)")]
-    async fn delete_pipeline(&self, Parameters(args): Parameters<DeletePipelineArgs>) -> String {
-        // Verify it's actually a pipeline
-        if let Some(tool) = self.registry.get_tool(&args.name) {
-            if *tool.tool_type() != ToolType::Pipeline {
-                return format!(
-                    "⚠️ '{}' is not a pipeline. Use delete_tool instead.",
-                    args.name
-                );
-            }
-        }
 
-        match self.registry.delete_tool(&args.name) {
-            Ok(true) => format!("🗑️ Pipeline '{}' deleted successfully", args.name),
-            Ok(false) => format!("⚠️ Pipeline '{}' not found", args.name),
-            Err(e) => format!("❌ Failed to delete pipeline: {}", e),
+    // ==================== MEMORY / PERSISTENT STATE ====================
+
+    #[tool(description = r#"Manage knowledge entries. Actions: 'store' (save new), 'get' (by ID), 'update' (modify), 'delete' (remove), 'list' (browse), 'bulk_store' (create multiple), 'bulk_update' (update multiple). For bulk operations, use 'entries' array. Store any text, code, or notes for later retrieval."#)]
+    async fn memory(&self, Parameters(args): Parameters<MemoryArgs>) -> String {
+        match args.action.as_str() {
+            "get" => {
+                let key = match &args.key {
+                    Some(k) => k,
+                    None => return "Error: 'key' is required for get action".to_string(),
+                };
+                match self.memory.get(&args.tool_name, key).await {
+                    Ok(Some(value)) => serde_json::to_string_pretty(&value).unwrap_or_else(|_| "null".to_string()),
+                    Ok(None) => "null".to_string(),
+                    Err(e) => format!("Error: {}", e),
+                }
+            }
+            "store" | "set" => {
+                let key = match &args.key {
+                    Some(k) => k,
+                    None => return "Error: 'key' is required for store action".to_string(),
+                };
+                let value = match &args.value {
+                    Some(v) => v.clone(),
+                    None => return "Error: 'value' is required for store action".to_string(),
+                };
+                match self.memory.set(&args.tool_name, key, value).await {
+                    Ok(()) => format!("✅ Stored '{}' for tool '{}'", key, args.tool_name),
+                    Err(e) => format!("Error: {}", e),
+                }
+            }
+            "delete" | "clear" => {
+                if let Some(key) = &args.key {
+                    // Delete specific key
+                    match self.memory.delete(&args.tool_name, key).await {
+                        Ok(true) => format!("🗑️ Deleted '{}' from tool '{}'", key, args.tool_name),
+                        Ok(false) => format!("Key '{}' not found for tool '{}'", key, args.tool_name),
+                        Err(e) => format!("Error: {}", e),
+                    }
+                } else {
+                    // Clear all keys for tool
+                    match self.memory.clear(&args.tool_name).await {
+                        Ok(count) => format!("🗑️ Cleared {} entries for tool '{}'", count, args.tool_name),
+                        Err(e) => format!("Error: {}", e),
+                    }
+                }
+            }
+            "list" => {
+                match self.memory.list_keys(&args.tool_name).await {
+                    Ok(keys) => {
+                        if keys.is_empty() {
+                            format!("No memory stored for tool '{}'", args.tool_name)
+                        } else {
+                            format!("Keys for '{}': {}", args.tool_name, keys.join(", "))
+                        }
+                    }
+                    Err(e) => format!("Error: {}", e),
+                }
+            }
+            "stats" => {
+                match self.memory.stats().await {
+                    Ok(stats) => format!(
+                        "📊 Memory Stats:\n  - Total entries: {}\n  - Tools with memory: {}\n  - Schema version: {}",
+                        stats.total_entries, stats.total_tools, stats.schema_version
+                    ),
+                    Err(e) => format!("Error: {}", e),
+                }
+            }
+            _ => format!("Unknown action: '{}'. Use: store, get, delete, list, stats", args.action),
         }
     }
 }
@@ -1486,13 +1276,46 @@ function _call_tool(name, args) {{
 impl ServerHandler for AppState {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            instructions: Some("Skillz - Build and execute custom tools at runtime. Supports WASM (Rust) and Script tools (Python, Node.js, Ruby, etc.) via JSON-RPC 2.0. CRITICAL: For Python scripts, use sys.stdin.readline() NOT sys.stdin.read() - read() blocks forever! Always call sys.stdout.flush() after printing.".into()),
+            instructions: Some("Skillz - Build and execute custom tools at runtime. Supports WASM (Rust) and Script tools (Python, Node.js, Ruby, etc.) via JSON-RPC 2.0. NOTE: Skillz tools can ONLY call other Skillz tools, not tools from other MCP servers. CRITICAL: For Python scripts, use sys.stdin.readline() NOT sys.stdin.read() - read() blocks forever! Always call sys.stdout.flush() after printing.".into()),
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                // Note: logging disabled temporarily due to Cursor sending setLevel before initialized
+                // which violates MCP spec (setLevel should come AFTER initialized notification)
+                // .enable_logging()
                 .build(),
             ..Default::default()
         }
+    }
+
+    /// Called when a client initializes - capture the peer for logging
+    async fn on_initialized(
+        &self,
+        ctx: NotificationContext<RoleServer>,
+    ) {
+        // Get client info to check capabilities
+        if let Some(client_info) = ctx.peer.peer_info() {
+            eprintln!("MCP client initialized: {:?}", client_info.client_info.name);
+            
+            // Check and store client capabilities
+            let caps = &client_info.capabilities;
+            let mcp_caps = McpClientCapabilities {
+                sampling: caps.sampling.is_some(),
+                elicitation: caps.elicitation.is_some(),
+                roots: caps.roots.is_some(),
+            };
+            
+            eprintln!("  Client capabilities:");
+            eprintln!("    - sampling: {}", mcp_caps.sampling);
+            eprintln!("    - elicitation: {}", mcp_caps.elicitation);
+            eprintln!("    - roots: {}", mcp_caps.roots);
+            
+            self.update_client_caps(mcp_caps).await;
+        } else {
+            eprintln!("MCP client initialized (no client info available)");
+        }
+        
+        self.update_peer(ctx.peer).await;
     }
 
     async fn list_resources(
@@ -1616,6 +1439,39 @@ call_tool(tool_name: "my_tool", arguments: {...})
 ### `list_tools` - List all registered tools
 ### `test_validate` - Validate Rust code before building
 ### `delete_tool` - Remove a registered tool
+
+---
+
+## 🧠 Memory (Persistent State)
+
+Tools can store and retrieve data that persists across sessions using libSQL/SQLite.
+
+### `memory_set` - Store a value
+```
+memory_set(tool_name: "my_tool", key: "counter", value: 42)
+memory_set(tool_name: "my_tool", key: "config", value: {"theme": "dark"})
+```
+
+### `memory_get` - Retrieve a value
+```
+memory_get(tool_name: "my_tool", key: "counter")  // Returns: 42
+```
+
+### `memory_list` - List all keys for a tool
+```
+memory_list(tool_name: "my_tool")  // Returns: counter, config
+```
+
+### `memory_clear` - Clear memory
+```
+memory_clear(tool_name: "my_tool")  // Clear one tool's memory
+memory_clear()                       // Clear ALL memory
+```
+
+### `memory_stats` - Get statistics
+```
+memory_stats()  // Total entries, tools, schema version
+```
 
 ---
 
@@ -1884,6 +1740,66 @@ Report progress during long operations:
 
 ---
 
+## 🧠 Memory (Persistent State)
+
+Store and retrieve data that persists across sessions.
+**Check `context.capabilities.memory` before using!**
+
+All memory operations are isolated per-tool (tool name is automatic).
+
+### Get a Value
+```json
+{"jsonrpc": "2.0", "method": "memory/get", "params": {"key": "counter"}, "id": 10}
+```
+**Response:**
+```json
+{"jsonrpc": "2.0", "result": {"value": 42}, "id": 10}
+```
+
+### Set a Value
+```json
+{"jsonrpc": "2.0", "method": "memory/set", "params": {"key": "counter", "value": 43}, "id": 11}
+```
+**Response:**
+```json
+{"jsonrpc": "2.0", "result": {"success": true}, "id": 11}
+```
+
+### List All Keys
+```json
+{"jsonrpc": "2.0", "method": "memory/list", "params": {}, "id": 12}
+```
+**Response:**
+```json
+{"jsonrpc": "2.0", "result": {"keys": ["counter", "config", "history"]}, "id": 12}
+```
+
+### Delete a Key
+```json
+{"jsonrpc": "2.0", "method": "memory/delete", "params": {"key": "counter"}, "id": 13}
+```
+**Response:**
+```json
+{"jsonrpc": "2.0", "result": {"deleted": true}, "id": 13}
+```
+
+### Python Helper Functions
+```python
+def memory_get(key):
+    req = {"jsonrpc": "2.0", "method": "memory/get", "params": {"key": key}, "id": 10}
+    print(json.dumps(req), flush=True)
+    resp = json.loads(sys.stdin.readline())
+    return resp.get("result", {}).get("value")
+
+def memory_set(key, value):
+    req = {"jsonrpc": "2.0", "method": "memory/set", "params": {"key": key, "value": value}, "id": 11}
+    print(json.dumps(req), flush=True)
+    resp = json.loads(sys.stdin.readline())
+    return resp.get("result", {}).get("success", False)
+```
+
+---
+
 ## 🎤 Elicitation (User Input)
 
 Request structured input from the user during tool execution.
@@ -2106,24 +2022,30 @@ async fn main() -> Result<()> {
 
     // Get tools directory from env var or use ~/tools as default
     let tools_dir = std::env::var("TOOLS_DIR").unwrap_or_else(|_| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{}/tools", home)
-    });
-
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            format!("{}/tools", home)
+        });
+    
     let storage_dir = std::path::PathBuf::from(tools_dir);
     std::fs::create_dir_all(&storage_dir)?;
 
     eprintln!("Tools directory: {}", storage_dir.display());
 
-    let registry = registry::ToolRegistry::new(storage_dir);
-    let runtime = runtime::ToolRuntime::new()?;
+    let registry = registry::ToolRegistry::new(storage_dir.clone());
+    let memory = memory::Memory::new(&storage_dir).await?;
+    
+    // Create runtime with memory support
+    let runtime = runtime::ToolRuntime::new()?
+        .with_memory(memory.clone());
 
-    let state = AppState::new(registry, runtime);
+    eprintln!("Memory database initialized (with runtime integration)");
+    
+    let state = AppState::new(registry, runtime, memory);
 
     match cli.transport.as_str() {
         "stdio" => {
             eprintln!("Skillz MCP started (stdio transport)");
-            state.serve(stdio()).await?.waiting().await?;
+    state.serve(stdio()).await?.waiting().await?;
         }
         "http" | "sse" => {
             use rmcp::transport::sse_server::{SseServer, SseServerConfig};
