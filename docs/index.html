@@ -413,6 +413,8 @@
             border: 1px solid var(--border);
             border-radius: 0 12px 12px 12px;
             overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            position: relative;
         }
 
         .code-header {
@@ -422,6 +424,32 @@
             padding: 0.75rem 1rem;
             background: rgba(0, 0, 0, 0.3);
             border-bottom: 1px solid var(--border);
+        }
+
+        .copy-button {
+            background: rgba(124, 58, 237, 0.2);
+            border: 1px solid rgba(124, 58, 237, 0.3);
+            color: var(--accent-secondary);
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .copy-button:hover {
+            background: rgba(124, 58, 237, 0.3);
+            border-color: var(--accent-primary);
+            transform: translateY(-1px);
+        }
+
+        .copy-button.copied {
+            background: rgba(16, 185, 129, 0.2);
+            border-color: rgba(16, 185, 129, 0.3);
+            color: var(--success);
         }
 
         .code-lang {
@@ -619,6 +647,60 @@
             .tools-table td {
                 padding: 0.75rem 1rem;
             }
+        }
+
+        /* Section separators */
+        .section-separator {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border), transparent);
+            margin: 4rem 0;
+        }
+
+        /* Scroll animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-on-scroll {
+            animation: fadeInUp 0.6s ease-out;
+        }
+
+        /* Scroll to top button */
+        .scroll-top {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.3s;
+            box-shadow: 0 4px 20px var(--accent-glow);
+            z-index: 99;
+        }
+
+        .scroll-top.visible {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .scroll-top:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 30px var(--accent-glow);
         }
     </style>
 </head>
@@ -835,6 +917,11 @@ cargo install skillz</code></pre>
                     <p>Built-in <code>skillz://guide</code> resource that automatically updates when new tools are
                         added.</p>
                 </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🌐</div>
+                    <h3>Tool Import</h3>
+                    <p>Import tools from GitHub repos or Gists. Share your tools with the community!</p>
+                </div>
             </div>
         </div>
     </section>
@@ -867,6 +954,11 @@ cargo install skillz</code></pre>
                     <tr>
                         <td class="tool-name">create_skill</td>
                         <td class="tool-desc">Step-by-step skill creation: Design → Implement → Test → Finalize.</td>
+                        <td><span class="tool-badge badge-core">Core</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">import_tool</td>
+                        <td class="tool-desc">Import tools from git repos or GitHub gists.</td>
                         <td><span class="tool-badge badge-core">Core</span></td>
                     </tr>
                     <tr>
@@ -1021,6 +1113,12 @@ cargo install skillz</code></pre>
         </div>
     </footer>
 
+    <div class="scroll-top" id="scrollTop">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="18 15 12 9 6 15"></polyline>
+        </svg>
+    </div>
+
     <script>
         // Code tab switching
         const codeExamples = {
@@ -1154,6 +1252,80 @@ for i in range(3):
                 document.getElementById('code-example').innerHTML = `<code>${example.code}</code>`;
             });
         });
+
+        // Copy button functionality
+        function addCopyButtons() {
+            const codeBlocks = document.querySelectorAll('.code-block');
+            codeBlocks.forEach(block => {
+                if (block.querySelector('.copy-button')) return; // Already has button
+
+                const header = block.querySelector('.code-header');
+                if (!header) return;
+
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'copy-button';
+                copyBtn.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                    <span>Copy</span>
+                `;
+
+                copyBtn.addEventListener('click', async () => {
+                    const code = block.querySelector('pre code');
+                    if (!code) return;
+
+                    try {
+                        await navigator.clipboard.writeText(code.textContent);
+                        copyBtn.classList.add('copied');
+                        copyBtn.innerHTML = `
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                            <span>Copied!</span>
+                        `;
+
+                        setTimeout(() => {
+                            copyBtn.classList.remove('copied');
+                            copyBtn.innerHTML = `
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                                <span>Copy</span>
+                            `;
+                        }, 2000);
+                    } catch (err) {
+                        console.error('Failed to copy:', err);
+                    }
+                });
+
+                header.appendChild(copyBtn);
+            });
+        }
+
+        // Scroll to top functionality
+        const scrollTopBtn = document.getElementById('scrollTop');
+        if (scrollTopBtn) {
+            window.addEventListener('scroll', () => {
+                if (window.scrollY > 500) {
+                    scrollTopBtn.classList.add('visible');
+                } else {
+                    scrollTopBtn.classList.remove('visible');
+                }
+            });
+
+            scrollTopBtn.addEventListener('click', () => {
+                window.scrollTo({
+                    top: 0,
+                    behavior: 'smooth'
+                });
+            });
+        }
+
+        // Initialize copy buttons after DOM is ready
+        document.addEventListener('DOMContentLoaded', addCopyButtons);
     </script>
 </body>
 
