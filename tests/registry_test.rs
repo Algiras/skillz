@@ -240,3 +240,144 @@ print(json.dumps({"result": "ok"}))"#;
         assert_eq!(parsed["wasm_dependencies"].as_array().unwrap().len(), 2);
     }
 }
+
+// ==================== Versioning Tests ====================
+
+mod versioning {
+    use super::*;
+    use skillz::registry::{ToolManifest, ToolRegistry, ToolType};
+
+    /// Test version auto-increment
+    #[test]
+    fn test_version_increment() {
+        assert_eq!(ToolRegistry::increment_version("1.0.0"), "1.0.1");
+        assert_eq!(ToolRegistry::increment_version("1.0.9"), "1.0.10");
+        assert_eq!(ToolRegistry::increment_version("2.5.3"), "2.5.4");
+        assert_eq!(ToolRegistry::increment_version("0.1.0"), "0.1.1");
+    }
+
+    /// Test version backup and listing
+    #[test]
+    fn test_version_backup_and_list() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let registry = ToolRegistry::new(temp_dir.path().to_path_buf());
+
+        // Create initial tool
+        let manifest = ToolManifest::new(
+            "test_versioned".to_string(),
+            "A versioned tool".to_string(),
+            ToolType::Script,
+        );
+
+        let script_code = b"#!/usr/bin/env python3\nprint('v1')";
+        registry
+            .register_tool(manifest, script_code)
+            .expect("Failed to register tool");
+
+        // Verify initial version
+        let tool = registry.get_tool("test_versioned").unwrap();
+        assert_eq!(tool.manifest.version, "1.0.0");
+
+        // Update tool (should auto-backup and increment)
+        let manifest2 = ToolManifest::new(
+            "test_versioned".to_string(),
+            "Updated versioned tool".to_string(),
+            ToolType::Script,
+        );
+
+        let script_code2 = b"#!/usr/bin/env python3\nprint('v2')";
+        registry
+            .register_tool(manifest2, script_code2)
+            .expect("Failed to register updated tool");
+
+        // Verify version was incremented
+        let tool = registry.get_tool("test_versioned").unwrap();
+        assert_eq!(tool.manifest.version, "1.0.1");
+
+        // Check versions list
+        let versions = registry.list_versions("test_versioned").unwrap();
+        assert!(versions.len() >= 2); // Current + at least one backup
+        assert!(versions.iter().any(|v| v.contains("1.0.1") && v.contains("current")));
+        assert!(versions.iter().any(|v| v.starts_with("1.0.0")));
+    }
+
+    /// Test version rollback
+    #[test]
+    fn test_version_rollback() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let registry = ToolRegistry::new(temp_dir.path().to_path_buf());
+
+        // Create initial tool
+        let mut manifest = ToolManifest::new(
+            "rollback_test".to_string(),
+            "Original description".to_string(),
+            ToolType::Script,
+        );
+        manifest.interpreter = Some("python3".to_string());
+
+        let script_code = b"#!/usr/bin/env python3\nprint('original')";
+        registry
+            .register_tool(manifest, script_code)
+            .expect("Failed to register tool");
+
+        // Update tool
+        let mut manifest2 = ToolManifest::new(
+            "rollback_test".to_string(),
+            "Updated description".to_string(),
+            ToolType::Script,
+        );
+        manifest2.interpreter = Some("python3".to_string());
+
+        let script_code2 = b"#!/usr/bin/env python3\nprint('updated')";
+        registry
+            .register_tool(manifest2, script_code2)
+            .expect("Failed to update tool");
+
+        // Verify updated version
+        let tool = registry.get_tool("rollback_test").unwrap();
+        assert_eq!(tool.manifest.version, "1.0.1");
+        assert_eq!(tool.manifest.description, "Updated description");
+
+        // Rollback to 1.0.0
+        registry
+            .rollback("rollback_test", "1.0.0")
+            .expect("Failed to rollback");
+
+        // Verify rollback
+        let tool = registry.get_tool("rollback_test").unwrap();
+        assert_eq!(tool.manifest.version, "1.0.0");
+        assert_eq!(tool.manifest.description, "Original description");
+    }
+
+    /// Test versions directory structure
+    #[test]
+    fn test_versions_directory_structure() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let tool_name = "versioned_tool";
+        let tool_dir = temp_dir.path().join(tool_name);
+        let versions_dir = tool_dir.join("versions");
+        let v1_dir = versions_dir.join("1.0.0");
+
+        // Create directory structure
+        std::fs::create_dir_all(&v1_dir).expect("Failed to create version dir");
+
+        // Create version manifest
+        let manifest = serde_json::json!({
+            "name": tool_name,
+            "version": "1.0.0",
+            "description": "Version 1.0.0",
+            "tool_type": "script"
+        });
+
+        std::fs::write(
+            v1_dir.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .expect("Failed to write manifest");
+
+        // Verify structure
+        assert!(versions_dir.exists());
+        assert!(v1_dir.exists());
+        assert!(v1_dir.join("manifest.json").exists());
+    }
+}

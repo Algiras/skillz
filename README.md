@@ -202,10 +202,11 @@ curl -X POST http://localhost:8080/message \
 | 🧠 **Memory** | Persistent key-value storage for tools |
 | 📊 **Logging/Progress** | Scripts can send logs and progress updates |
 | 🔥 **Hot Reload** | Watch tools directory, auto-reload on changes |
+| 📦 **Versioning** | Auto-backup on update, rollback to any version |
 
 ---
 
-## 📖 Available Tools (9 Core)
+## 📖 Available Tools (10 Core)
 
 | Tool | Description |
 |------|-------------|
@@ -218,6 +219,7 @@ curl -X POST http://localhost:8080/message \
 | `execute_code` | Run code that composes multiple tools |
 | `pipeline` | Create, list, delete pipeline tools (action-based) |
 | `memory` | Persistent storage for tools (store, get, list, delete, stats) |
+| `version` | List versions, rollback to previous, view version info |
 
 ---
 

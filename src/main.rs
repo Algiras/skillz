@@ -160,6 +160,28 @@ struct DeleteToolArgs {
 
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+enum VersionAction {
+    #[serde(rename = "list")]
+    List,
+    #[serde(rename = "rollback")]
+    Rollback,
+    #[serde(rename = "info")]
+    Info,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct VersionArgs {
+    /// Action: 'list', 'rollback', 'info'
+    action: VersionAction,
+    /// Tool name
+    tool_name: Option<String>,
+    /// Version to rollback to (for 'rollback' action)
+    version: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
 struct CallToolArgs {
     tool_name: String,
     arguments: Option<serde_json::Value>,
@@ -557,6 +579,81 @@ Note: Check context.capabilities before using elicitation/sampling - not all cli
             Ok(true) => format!("🗑️ Tool '{}' deleted successfully", args.tool_name),
             Ok(false) => format!("Tool '{}' not found", args.tool_name),
             Err(e) => format!("Error deleting tool: {}", e),
+        }
+    }
+
+    // ==================== VERSIONING ====================
+
+    #[tool(
+        description = r#"Manage tool versions. Actions: 'list' (show versions), 'rollback' (restore version), 'info' (current version).
+
+Tools are automatically versioned:
+- Updates auto-backup current version
+- Version auto-increments on update
+- Rollback restores any previous version
+
+Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
+    )]
+    async fn version(&self, Parameters(args): Parameters<VersionArgs>) -> String {
+        match args.action {
+            VersionAction::List => {
+                let name = match args.tool_name {
+                    Some(n) => n,
+                    None => return "❌ tool_name is required for 'list' action".to_string(),
+                };
+                match self.registry.list_versions(&name) {
+                    Ok(versions) if versions.is_empty() => {
+                        format!("No versions found for '{}'", name)
+                    }
+                    Ok(versions) => {
+                        let mut output = format!("## 📦 Versions of '{}'\n\n", name);
+                        for v in versions {
+                            output.push_str(&format!("- {}\n", v));
+                        }
+                        output
+                    }
+                    Err(e) => format!("❌ Error listing versions: {}", e),
+                }
+            }
+            VersionAction::Rollback => {
+                let name = match args.tool_name {
+                    Some(n) => n,
+                    None => return "❌ tool_name is required for 'rollback' action".to_string(),
+                };
+                let version = match args.version {
+                    Some(v) => v,
+                    None => return "❌ version is required for 'rollback' action".to_string(),
+                };
+                match self.registry.rollback(&name, &version) {
+                    Ok(msg) => format!("✅ {}", msg),
+                    Err(e) => format!("❌ Rollback failed: {}", e),
+                }
+            }
+            VersionAction::Info => {
+                let name = match args.tool_name {
+                    Some(n) => n,
+                    None => return "❌ tool_name is required for 'info' action".to_string(),
+                };
+                match self.registry.get_tool(&name) {
+                    Some(tool) => {
+                        let versions = self.registry.list_versions(&name).unwrap_or_default();
+                        format!(
+                            "## 📦 {} v{}\n\n\
+                            - **Type:** {:?}\n\
+                            - **Created:** {}\n\
+                            - **Updated:** {}\n\
+                            - **Available versions:** {}\n",
+                            name,
+                            tool.manifest.version,
+                            tool.manifest.tool_type,
+                            tool.manifest.created_at.as_deref().unwrap_or("unknown"),
+                            tool.manifest.updated_at.as_deref().unwrap_or("unknown"),
+                            versions.len()
+                        )
+                    }
+                    None => format!("Tool '{}' not found", name),
+                }
+            }
         }
     }
 

@@ -538,10 +538,20 @@ impl ToolRegistry {
     /// Register a WASM tool with optional source code preservation
     pub fn register_wasm_tool(
         &self,
-        manifest: ToolManifest,
+        mut manifest: ToolManifest,
         wasm_bytes: &[u8],
         source_code: &str,
     ) -> Result<ToolConfig> {
+        // Backup existing version if updating
+        if let Some(old_version) = self.backup_version(&manifest.name)? {
+            // Auto-increment version if same version
+            if manifest.version == old_version {
+                manifest.version = Self::increment_version(&manifest.version);
+                eprintln!("📈 Auto-incremented version to {}", manifest.version);
+            }
+        }
+        manifest.updated_at = Some(chrono_now());
+
         let tool_dir = self.storage_dir.join(&manifest.name);
         fs::create_dir_all(&tool_dir)?;
 
@@ -575,7 +585,17 @@ impl ToolRegistry {
     }
 
     /// Register a script tool
-    fn register_script_tool(&self, manifest: ToolManifest, code: &[u8]) -> Result<ToolConfig> {
+    fn register_script_tool(&self, mut manifest: ToolManifest, code: &[u8]) -> Result<ToolConfig> {
+        // Backup existing version if updating
+        if let Some(old_version) = self.backup_version(&manifest.name)? {
+            // Auto-increment version if same version
+            if manifest.version == old_version {
+                manifest.version = Self::increment_version(&manifest.version);
+                eprintln!("📈 Auto-incremented version to {}", manifest.version);
+            }
+        }
+        manifest.updated_at = Some(chrono_now());
+
         let tool_dir = self.storage_dir.join(&manifest.name);
         fs::create_dir_all(&tool_dir)?;
 
@@ -597,7 +617,6 @@ impl ToolRegistry {
         };
 
         // Update manifest with entry_file if not set
-        let mut manifest = manifest;
         if manifest.entry_file.is_none() {
             manifest.entry_file = Some(script_filename.clone());
         }
@@ -636,7 +655,17 @@ impl ToolRegistry {
     }
 
     /// Register a pipeline tool (no code, just manifest with steps)
-    fn register_pipeline_tool(&self, manifest: ToolManifest) -> Result<ToolConfig> {
+    fn register_pipeline_tool(&self, mut manifest: ToolManifest) -> Result<ToolConfig> {
+        // Backup existing version if updating
+        if let Some(old_version) = self.backup_version(&manifest.name)? {
+            // Auto-increment version if same version
+            if manifest.version == old_version {
+                manifest.version = Self::increment_version(&manifest.version);
+                eprintln!("📈 Auto-incremented version to {}", manifest.version);
+            }
+        }
+        manifest.updated_at = Some(chrono_now());
+
         let tool_dir = self.storage_dir.join(&manifest.name);
         fs::create_dir_all(&tool_dir)?;
 
@@ -737,7 +766,12 @@ impl ToolRegistry {
         }
         
         // Load the tool from its directory
-        self.load_tool_from_dir(&tool_dir)?;
+        let config = self.load_tool_from_dir(&tool_dir)?;
+        
+        // Update in-memory cache
+        let mut tools = self.tools.write().unwrap();
+        tools.insert(name.to_string(), config);
+        
         eprintln!("Reloaded tool: {}", name);
         Ok(())
     }
@@ -748,4 +782,188 @@ impl ToolRegistry {
         tools.remove(name);
         eprintln!("Unloaded tool: {}", name);
     }
+
+    // ==================== VERSIONING ====================
+
+    /// Get the versions directory for a tool
+    fn versions_dir(&self, name: &str) -> PathBuf {
+        self.storage_dir.join(name).join("versions")
+    }
+
+    /// Backup current version before update
+    pub fn backup_version(&self, name: &str) -> Result<Option<String>> {
+        let tool = match self.get_tool(name) {
+            Some(t) => t,
+            None => return Ok(None), // No existing tool to backup
+        };
+
+        let version = tool.manifest.version.clone();
+        let versions_dir = self.versions_dir(name);
+        let version_dir = versions_dir.join(&version);
+
+        // Skip if this version already backed up
+        if version_dir.exists() {
+            return Ok(Some(version));
+        }
+
+        fs::create_dir_all(&version_dir)?;
+
+        // Copy manifest
+        let manifest_path = tool.tool_dir.join("manifest.json");
+        if manifest_path.exists() {
+            fs::copy(&manifest_path, version_dir.join("manifest.json"))?;
+        }
+
+        // Copy script/wasm file
+        match *tool.tool_type() {
+            ToolType::Script => {
+                if tool.script_path.exists() {
+                    let filename = tool.script_path.file_name().unwrap();
+                    fs::copy(&tool.script_path, version_dir.join(filename))?;
+                }
+            }
+            ToolType::Wasm => {
+                if tool.wasm_path.exists() {
+                    let filename = tool.wasm_path.file_name().unwrap();
+                    fs::copy(&tool.wasm_path, version_dir.join(filename))?;
+                }
+                // Also copy source if available
+                let src_path = tool.tool_dir.join("src.rs");
+                if src_path.exists() {
+                    fs::copy(&src_path, version_dir.join("src.rs"))?;
+                }
+            }
+            ToolType::Pipeline => {
+                // Pipeline is just the manifest, already copied
+            }
+        }
+
+        eprintln!("📦 Backed up {} version {}", name, version);
+        Ok(Some(version))
+    }
+
+    /// List all versions of a tool
+    pub fn list_versions(&self, name: &str) -> Result<Vec<String>> {
+        let versions_dir = self.versions_dir(name);
+        let mut versions = Vec::new();
+
+        // Add current version
+        if let Some(tool) = self.get_tool(name) {
+            versions.push(format!("{} (current)", tool.manifest.version));
+        }
+
+        // Add backed up versions
+        if versions_dir.exists() {
+            for entry in fs::read_dir(&versions_dir)? {
+                let entry = entry?;
+                if entry.file_type()?.is_dir() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        if !versions.iter().any(|v| v.starts_with(name)) {
+                            versions.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort versions (semver-ish)
+        versions.sort_by(|a, b| {
+            let a_clean = a.replace(" (current)", "");
+            let b_clean = b.replace(" (current)", "");
+            version_compare(&b_clean, &a_clean) // Descending
+        });
+
+        Ok(versions)
+    }
+
+    /// Rollback to a previous version
+    pub fn rollback(&self, name: &str, version: &str) -> Result<String> {
+        let versions_dir = self.versions_dir(name);
+        let version_dir = versions_dir.join(version);
+
+        if !version_dir.exists() {
+            anyhow::bail!("Version {} not found for tool {}", version, name);
+        }
+
+        // Backup current version first
+        self.backup_version(name)?;
+
+        let tool_dir = self.storage_dir.join(name);
+
+        // Read the old manifest
+        let old_manifest_path = version_dir.join("manifest.json");
+        let manifest_content = fs::read_to_string(&old_manifest_path)?;
+        let manifest: ToolManifest = serde_json::from_str(&manifest_content)?;
+
+        // Copy files back
+        fs::copy(&old_manifest_path, tool_dir.join("manifest.json"))?;
+
+        match manifest.tool_type {
+            ToolType::Script => {
+                // Find and copy script file
+                for entry in fs::read_dir(&version_dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if let Some(ext) = path.extension() {
+                        if ["py", "js", "rb", "sh", "pl", "php"].contains(&ext.to_str().unwrap_or("")) {
+                            let filename = path.file_name().unwrap();
+                            fs::copy(&path, tool_dir.join(filename))?;
+                        }
+                    }
+                }
+            }
+            ToolType::Wasm => {
+                // Copy wasm file
+                for entry in fs::read_dir(&version_dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.extension().map(|e| e == "wasm").unwrap_or(false) {
+                        let filename = path.file_name().unwrap();
+                        fs::copy(&path, tool_dir.join(filename))?;
+                    }
+                }
+                // Copy source if available
+                let src_path = version_dir.join("src.rs");
+                if src_path.exists() {
+                    fs::copy(&src_path, tool_dir.join("src.rs"))?;
+                }
+            }
+            ToolType::Pipeline => {
+                // Pipeline is just the manifest, already copied
+            }
+        }
+
+        // Reload the tool
+        self.reload_tool(name)?;
+
+        Ok(format!("Rolled back {} to version {}", name, version))
+    }
+
+    /// Increment version number (simple semver patch bump)
+    pub fn increment_version(version: &str) -> String {
+        let parts: Vec<&str> = version.split('.').collect();
+        if parts.len() == 3 {
+            if let Ok(patch) = parts[2].parse::<u32>() {
+                return format!("{}.{}.{}", parts[0], parts[1], patch + 1);
+            }
+        }
+        // Fallback: append .1
+        format!("{}.1", version)
+    }
+}
+
+/// Simple version comparison (for sorting)
+fn version_compare(a: &str, b: &str) -> std::cmp::Ordering {
+    let a_parts: Vec<u32> = a.split('.').filter_map(|s| s.parse().ok()).collect();
+    let b_parts: Vec<u32> = b.split('.').filter_map(|s| s.parse().ok()).collect();
+    
+    for i in 0..3 {
+        let a_val = a_parts.get(i).unwrap_or(&0);
+        let b_val = b_parts.get(i).unwrap_or(&0);
+        match a_val.cmp(b_val) {
+            std::cmp::Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    std::cmp::Ordering::Equal
 }
