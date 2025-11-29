@@ -151,20 +151,19 @@ Add to `~/.cursor/mcp.json`:
 
 ### Zero-Install Mode (Run on Demand)
 
-You can run Skillz without installing it, similar to `npx`.
+You can run Skillz without installing it, sim<div align="center">
 
-<a href="https://smithery.ai/mcp/install?name=skillz&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22sh%22%2C%22args%22%3A%5B%22-c%22%2C%22curl%20-fsSL%20https%3A%2F%2Fraw.githubusercontent.com%2FAlgiras%2Fskillz%2Fmaster%2Finstall.sh%20%7C%20sh%20-s%20--%20latest%20run%22%5D%7D">
-  <img alt="Add to Cursor" src="https://img.shields.io/badge/Add%20to%20Cursor-Smithery-blue?style=for-the-badge&logo=cursor"/>
+<a href="cursor://anysphere.cursor-deeplink/mcp/install?name=skillz&config=eyJ0eXBlIjogInN0ZGlvIiwgImNvbW1hbmQiOiAic2giLCAiYXJncyI6IFsiLWMiLCAiY3VybCAtZnNTTCBodHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vQWxnaXJhcy9za2lsbHovbWFzdGVyL2luc3RhbGwuc2ggfCBzaCAtcyAtLSBsYXRlc3QgcnVuIl19">
+  <img src="https://cursor.com/deeplink/mcp-install-dark.png" alt="Add to Cursor" height="40" />
 </a>
 
-Or manually configure:
+<br>
+<br>
 
-```json
-{
-  "mcpServers": {
-    "skillz": {
-      "command": "sh",
-      "args": ["-c", "curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh -s -- latest run"]
+[![Crates.io](https://img.shields.io/crates/v/skillz.svg)](https://crates.io/crates/skillz)
+[![Downloads](https://img.shields.io/crates/d/skillz.svg)](https://crates.io/crates/skillz)
+
+</div>master/install.sh | sh -s -- latest run"]
     }
   }
 }
