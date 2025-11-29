@@ -35,6 +35,15 @@ pub struct ToolConfig {
     pub interpreter: Option<String>,
     /// JSON Schema for tool arguments
     pub schema: serde_json::Value,
+    /// Dependencies for script tools (pip packages, npm modules, etc.)
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    /// Path to virtual environment (for Python) or node_modules (for Node.js)
+    #[serde(default)]
+    pub env_path: Option<PathBuf>,
+    /// Whether dependencies have been installed
+    #[serde(default)]
+    pub deps_installed: bool,
 }
 
 #[derive(Clone)]
@@ -121,5 +130,56 @@ impl ToolRegistry {
 
     pub fn scripts_dir(&self) -> PathBuf {
         self.storage_dir.join("scripts")
+    }
+
+    /// Get directory for tool environments (venvs, node_modules)
+    pub fn envs_dir(&self) -> PathBuf {
+        self.storage_dir.join("envs")
+    }
+
+    /// Get environment path for a specific tool
+    pub fn tool_env_path(&self, tool_name: &str, interpreter: Option<&str>) -> PathBuf {
+        let envs_dir = self.envs_dir();
+        match interpreter {
+            Some("python3") | Some("python") => envs_dir.join(format!("{}_venv", tool_name)),
+            Some("node") | Some("nodejs") => envs_dir.join(format!("{}_node", tool_name)),
+            _ => envs_dir.join(tool_name),
+        }
+    }
+
+    /// Update tool's dependency status
+    pub fn mark_deps_installed(&self, tool_name: &str, env_path: PathBuf) -> Result<()> {
+        let mut tools = self.tools.write().unwrap();
+        if let Some(tool) = tools.get_mut(tool_name) {
+            tool.deps_installed = true;
+            tool.env_path = Some(env_path);
+        }
+        drop(tools);
+        self.save_manifest()?;
+        Ok(())
+    }
+
+    /// Delete a tool and its environment
+    pub fn delete_tool(&self, name: &str) -> Result<bool> {
+        let mut tools = self.tools.write().unwrap();
+        if let Some(tool) = tools.remove(name) {
+            // Clean up files
+            if tool.tool_type == ToolType::Wasm && tool.wasm_path.exists() {
+                let _ = fs::remove_file(&tool.wasm_path);
+            }
+            if tool.tool_type == ToolType::Script && tool.script_path.exists() {
+                let _ = fs::remove_file(&tool.script_path);
+            }
+            if let Some(env_path) = tool.env_path {
+                if env_path.exists() {
+                    let _ = fs::remove_dir_all(&env_path);
+                }
+            }
+            drop(tools);
+            self.save_manifest()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }

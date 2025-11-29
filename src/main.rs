@@ -53,6 +53,25 @@ struct RegisterScriptArgs {
     extension: Option<String>,
     /// Allow overwriting existing tools
     overwrite: Option<bool>,
+    /// Dependencies to install (pip packages for Python, npm packages for Node.js)
+    /// Example: ["requests", "pandas"] for Python, ["axios", "lodash"] for Node.js
+    dependencies: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct InstallDepsArgs {
+    /// Name of the tool to install dependencies for
+    tool_name: String,
+    /// Additional dependencies to install (optional, uses tool's configured deps if not provided)
+    dependencies: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct DeleteToolArgs {
+    /// Name of the tool to delete
+    tool_name: String,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -145,6 +164,9 @@ impl AppState {
             script_path: std::path::PathBuf::new(),
             interpreter: None,
             schema: serde_json::json!({ "type": "object" }),
+            dependencies: vec![],
+            env_path: None,
+            deps_installed: false,
         }) {
             return format!("Registration error: {}", e);
         }
@@ -206,6 +228,41 @@ impl AppState {
             }
         }
 
+        // Handle dependencies
+        let dependencies = args.dependencies.clone().unwrap_or_default();
+        let mut env_path: Option<std::path::PathBuf> = None;
+        let mut deps_installed = false;
+        let mut deps_message = String::new();
+
+        if !dependencies.is_empty() {
+            let tool_env_path = self
+                .registry
+                .tool_env_path(&args.name, args.interpreter.as_deref());
+
+            // Create envs directory
+            let _ = std::fs::create_dir_all(self.registry.envs_dir());
+
+            match runtime::install_tool_deps(
+                &tool_env_path,
+                args.interpreter.as_deref(),
+                &dependencies,
+            ) {
+                Ok(result) => {
+                    if result.success {
+                        env_path = result.env_path;
+                        deps_installed = true;
+                        deps_message = format!("\n\n📦 Dependencies installed: {:?}", dependencies);
+                    } else {
+                        deps_message =
+                            format!("\n\n⚠️ Dependency install failed: {}", result.message);
+                    }
+                }
+                Err(e) => {
+                    deps_message = format!("\n\n⚠️ Dependency install error: {}", e);
+                }
+            }
+        }
+
         // Register the tool
         if let Err(e) = self.registry.register_tool(registry::ToolConfig {
             name: args.name.clone(),
@@ -215,6 +272,9 @@ impl AppState {
             script_path: script_path.clone(),
             interpreter: args.interpreter.clone(),
             schema: serde_json::json!({ "type": "object" }),
+            dependencies,
+            env_path,
+            deps_installed,
         }) {
             return format!("Registration error: {}", e);
         }
@@ -226,18 +286,80 @@ impl AppState {
 
         if args.overwrite.unwrap_or(false) {
             format!(
-                "📜 Script Tool '{}'{} updated successfully\n\nPath: {}",
+                "📜 Script Tool '{}'{} updated successfully\n\nPath: {}{}",
                 args.name,
                 interpreter_info,
-                script_path.display()
+                script_path.display(),
+                deps_message
             )
         } else {
             format!(
-                "📜 Script Tool '{}'{} registered\n\nPath: {}",
+                "📜 Script Tool '{}'{} registered\n\nPath: {}{}",
                 args.name,
                 interpreter_info,
-                script_path.display()
+                script_path.display(),
+                deps_message
             )
+        }
+    }
+
+    // ==================== DEPENDENCY MANAGEMENT ====================
+
+    #[tool(
+        description = "Install dependencies for a script tool. Supports pip (Python) and npm (Node.js)."
+    )]
+    async fn install_deps(&self, Parameters(args): Parameters<InstallDepsArgs>) -> String {
+        eprintln!("Installing dependencies for: {}", args.tool_name);
+
+        let tool = match self.registry.get_tool(&args.tool_name) {
+            Some(t) => t,
+            None => return format!("Error: Tool '{}' not found", args.tool_name),
+        };
+
+        if tool.tool_type != ToolType::Script {
+            return "Error: Dependency installation only supported for script tools".to_string();
+        }
+
+        let deps = args
+            .dependencies
+            .unwrap_or_else(|| tool.dependencies.clone());
+
+        if deps.is_empty() {
+            return "No dependencies to install".to_string();
+        }
+
+        let env_path = self
+            .registry
+            .tool_env_path(&args.tool_name, tool.interpreter.as_deref());
+
+        // Create envs directory
+        let _ = std::fs::create_dir_all(self.registry.envs_dir());
+
+        match runtime::install_tool_deps(&env_path, tool.interpreter.as_deref(), &deps) {
+            Ok(result) => {
+                if result.success {
+                    // Update tool config
+                    if let Err(e) = self.registry.mark_deps_installed(&args.tool_name, env_path) {
+                        return format!("Deps installed but failed to update config: {}", e);
+                    }
+                    format!(
+                        "✅ Dependencies installed successfully!\n\n{}",
+                        result.message
+                    )
+                } else {
+                    format!("❌ Installation failed:\n\n{}", result.message)
+                }
+            }
+            Err(e) => format!("❌ Installation error: {}", e),
+        }
+    }
+
+    #[tool(description = "Delete a registered tool and clean up its files")]
+    async fn delete_tool(&self, Parameters(args): Parameters<DeleteToolArgs>) -> String {
+        match self.registry.delete_tool(&args.tool_name) {
+            Ok(true) => format!("🗑️ Tool '{}' deleted successfully", args.tool_name),
+            Ok(false) => format!("Tool '{}' not found", args.tool_name),
+            Err(e) => format!("Error deleting tool: {}", e),
         }
     }
 
@@ -549,6 +671,9 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                         script_path: std::path::PathBuf::new(),
                         interpreter: None,
                         schema: serde_json::json!({ "type": "object" }),
+                        dependencies: vec![],
+                        env_path: None,
+                        deps_installed: false,
                     }) {
                         return format!("❌ Failed to register: {}", e);
                     }
@@ -598,6 +723,9 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                         script_path: script_path.clone(),
                         interpreter: args.interpreter.clone(),
                         schema: serde_json::json!({ "type": "object" }),
+                        dependencies: vec![],
+                        env_path: None,
+                        deps_installed: false,
                     }) {
                         return format!("❌ Failed to register: {}", e);
                     }

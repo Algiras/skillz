@@ -194,10 +194,12 @@ Step 4: Finalize  → Register and use
 | Tool | Description |
 |------|-------------|
 | `build_tool` | Compile Rust code → WASM tool |
-| `register_script` | Register script tool (Python, Node, etc.) |
+| `register_script` | Register script tool with optional dependencies |
 | `create_skill` | Step-by-step skill creation |
 | `call_tool` | Execute a registered tool |
 | `list_tools` | List all available tools |
+| `install_deps` | Install dependencies for script tools |
+| `delete_tool` | Delete a tool and clean up files |
 | `test_validate` | Validate Rust code before building |
 
 ### Resources
@@ -236,6 +238,26 @@ req = json.loads(sys.stdin.read())
 text = req['params']['arguments'].get('text', '')
 print(json.dumps({'jsonrpc': '2.0', 'result': {'words': len(text.split())}, 'id': req['id']}))"
 )
+```
+
+### Create a Tool with Dependencies
+
+```
+register_script(
+  name: "http_client",
+  interpreter: "python3",
+  description: "Makes HTTP requests",
+  dependencies: ["requests", "urllib3"],
+  code: "..."
+)
+```
+
+Dependencies are automatically installed in an isolated virtual environment (Python) or node_modules (Node.js).
+
+### Install Dependencies Later
+
+```
+install_deps(tool_name: "my_tool", dependencies: ["pandas", "numpy"])
 ```
 
 ### Execute Tools

@@ -222,11 +222,38 @@ impl ToolRuntime {
         let request_json = serde_json::to_string(&request)?;
         eprintln!("Script request: {}", request_json);
 
-        // Determine how to run the script
+        // Determine how to run the script (with virtual environment if configured)
         let mut cmd = if let Some(ref interpreter) = config.interpreter {
-            let mut c = Command::new(interpreter);
-            c.arg(&config.script_path);
-            c
+            // Check if we have a virtual environment
+            if let Some(ref env_path) = config.env_path {
+                let interpreter_in_env = match interpreter.as_str() {
+                    "python3" | "python" => {
+                        let venv_python = env_path.join("bin").join("python");
+                        if venv_python.exists() {
+                            venv_python.to_string_lossy().to_string()
+                        } else {
+                            interpreter.clone()
+                        }
+                    }
+                    "node" | "nodejs" => interpreter.clone(), // Node uses NODE_PATH
+                    _ => interpreter.clone(),
+                };
+                let mut c = Command::new(&interpreter_in_env);
+                c.arg(&config.script_path);
+
+                // For Node.js, set NODE_PATH to include local node_modules
+                if interpreter == "node" || interpreter == "nodejs" {
+                    let node_modules = env_path.join("node_modules");
+                    if node_modules.exists() {
+                        c.env("NODE_PATH", node_modules);
+                    }
+                }
+                c
+            } else {
+                let mut c = Command::new(interpreter);
+                c.arg(&config.script_path);
+                c
+            }
         } else {
             Command::new(&config.script_path)
         };
@@ -349,5 +376,172 @@ impl ToolRuntime {
             logs,
             progress,
         })
+    }
+}
+
+// ==================== Dependency Management ====================
+
+/// Result of dependency installation
+#[derive(Debug)]
+pub struct InstallResult {
+    pub success: bool,
+    pub message: String,
+    pub env_path: Option<std::path::PathBuf>,
+}
+
+/// Install Python dependencies using pip in a virtual environment
+pub fn install_python_deps(env_path: &Path, dependencies: &[String]) -> Result<InstallResult> {
+    // Create virtual environment if it doesn't exist
+    if !env_path.exists() {
+        eprintln!("Creating Python venv at: {:?}", env_path);
+        let output = Command::new("python3")
+            .args(["-m", "venv"])
+            .arg(env_path)
+            .output()
+            .context("Failed to create venv")?;
+
+        if !output.status.success() {
+            return Ok(InstallResult {
+                success: false,
+                message: format!(
+                    "Failed to create venv: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+                env_path: None,
+            });
+        }
+    }
+
+    // Install dependencies using pip
+    let pip_path = env_path.join("bin").join("pip");
+    if !pip_path.exists() {
+        return Ok(InstallResult {
+            success: false,
+            message: "pip not found in venv".to_string(),
+            env_path: None,
+        });
+    }
+
+    if dependencies.is_empty() {
+        return Ok(InstallResult {
+            success: true,
+            message: "No dependencies to install".to_string(),
+            env_path: Some(env_path.to_path_buf()),
+        });
+    }
+
+    eprintln!("Installing Python deps: {:?}", dependencies);
+    let output = Command::new(&pip_path)
+        .arg("install")
+        .args(dependencies)
+        .output()
+        .context("Failed to run pip install")?;
+
+    if output.status.success() {
+        Ok(InstallResult {
+            success: true,
+            message: format!(
+                "Installed {} dependencies:\n{}",
+                dependencies.len(),
+                String::from_utf8_lossy(&output.stdout)
+            ),
+            env_path: Some(env_path.to_path_buf()),
+        })
+    } else {
+        Ok(InstallResult {
+            success: false,
+            message: format!(
+                "pip install failed:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+            env_path: None,
+        })
+    }
+}
+
+/// Install Node.js dependencies using npm
+pub fn install_node_deps(env_path: &Path, dependencies: &[String]) -> Result<InstallResult> {
+    // Create directory if it doesn't exist
+    std::fs::create_dir_all(env_path)?;
+
+    if dependencies.is_empty() {
+        return Ok(InstallResult {
+            success: true,
+            message: "No dependencies to install".to_string(),
+            env_path: Some(env_path.to_path_buf()),
+        });
+    }
+
+    // Create package.json
+    let package_json = serde_json::json!({
+        "name": "skillz-tool",
+        "version": "1.0.0",
+        "private": true,
+        "dependencies": dependencies.iter()
+            .map(|d| {
+                let parts: Vec<&str> = d.splitn(2, '@').collect();
+                if parts.len() == 2 {
+                    (parts[0].to_string(), parts[1].to_string())
+                } else {
+                    (d.clone(), "latest".to_string())
+                }
+            })
+            .collect::<std::collections::HashMap<String, String>>()
+    });
+
+    let package_path = env_path.join("package.json");
+    std::fs::write(&package_path, serde_json::to_string_pretty(&package_json)?)?;
+
+    eprintln!("Installing Node.js deps: {:?}", dependencies);
+    let output = Command::new("npm")
+        .current_dir(env_path)
+        .args(["install", "--production"])
+        .output()
+        .context("Failed to run npm install")?;
+
+    if output.status.success() {
+        Ok(InstallResult {
+            success: true,
+            message: format!(
+                "Installed {} dependencies:\n{}",
+                dependencies.len(),
+                String::from_utf8_lossy(&output.stdout)
+            ),
+            env_path: Some(env_path.to_path_buf()),
+        })
+    } else {
+        Ok(InstallResult {
+            success: false,
+            message: format!(
+                "npm install failed:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+            env_path: None,
+        })
+    }
+}
+
+/// Install dependencies for a tool based on its interpreter
+pub fn install_tool_deps(
+    env_path: &Path,
+    interpreter: Option<&str>,
+    dependencies: &[String],
+) -> Result<InstallResult> {
+    match interpreter {
+        Some("python3") | Some("python") => install_python_deps(env_path, dependencies),
+        Some("node") | Some("nodejs") => install_node_deps(env_path, dependencies),
+        Some(other) => Ok(InstallResult {
+            success: false,
+            message: format!(
+                "Dependency installation not supported for interpreter: {}",
+                other
+            ),
+            env_path: None,
+        }),
+        None => Ok(InstallResult {
+            success: false,
+            message: "No interpreter specified for dependency installation".to_string(),
+            env_path: None,
+        }),
     }
 }
