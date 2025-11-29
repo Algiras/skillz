@@ -899,9 +899,25 @@ cargo install skillz</code></pre>
         <div class="container">
             <div class="section-title" style="margin-bottom: 3rem;">
                 <h2>🔧 Configuration</h2>
-                <p>Environment variables to control behavior</p>
+                <p>CLI options and environment variables</p>
             </div>
             <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🔥</div>
+                    <h3>--hot-reload</h3>
+                    <p>Watch tools directory for changes and auto-reload.
+                        <br><code
+                            style="font-size: 0.8em; color: var(--accent-secondary);">skillz --hot-reload</code>
+                    </p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🌍</div>
+                    <h3>--transport http</h3>
+                    <p>Run as HTTP server with SSE for web apps.
+                        <br><code
+                            style="font-size: 0.8em; color: var(--accent-secondary);">skillz --transport http --port 8080</code>
+                    </p>
+                </div>
                 <div class="feature-card">
                     <div class="feature-icon">📂</div>
                     <h3>SKILLZ_ROOTS</h3>
@@ -916,14 +932,6 @@ cargo install skillz</code></pre>
                     <p>Isolation mode for script tools (Linux only).
                         <br><code
                             style="font-size: 0.8em; color: var(--accent-secondary);">bubblewrap | firejail | nsjail</code>
-                    </p>
-                </div>
-                <div class="feature-card">
-                    <div class="feature-icon">🌐</div>
-                    <h3>SKILLZ_SANDBOX_NETWORK</h3>
-                    <p>Allow network access in sandbox (set to 1).
-                        <br><code
-                            style="font-size: 0.8em; color: var(--accent-secondary);">export SKILLZ_SANDBOX_NETWORK=1</code>
                     </p>
                 </div>
             </div>
@@ -1005,6 +1013,11 @@ cargo install skillz</code></pre>
                     <div class="feature-icon">🌐</div>
                     <h3>Tool Import</h3>
                     <p>Import tools from GitHub repos or Gists. Share your tools with the community!</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔥</div>
+                    <h3>Hot Reload</h3>
+                    <p>Watch tools directory for changes. Auto-reload modified tools without server restart!</p>
                 </div>
             </div>
         </div>
