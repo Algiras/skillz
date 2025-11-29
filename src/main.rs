@@ -187,8 +187,6 @@ struct CallToolArgs {
     arguments: Option<serde_json::Value>,
 }
 
-
-
 /// Code execution mode - compose multiple tools via code
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
@@ -267,9 +265,13 @@ struct MemoryArgs {
 }
 
 impl AppState {
-    fn new(registry: registry::ToolRegistry, mut runtime: runtime::ToolRuntime, memory: memory::Memory) -> Self {
+    fn new(
+        registry: registry::ToolRegistry,
+        mut runtime: runtime::ToolRuntime,
+        memory: memory::Memory,
+    ) -> Self {
         let peer: SharedPeer = Arc::new(RwLock::new(None));
-        
+
         // Set up logging handler that forwards to MCP peer
         let peer_for_logging = peer.clone();
         let logging_handler: runtime::LoggingHandler = Arc::new(move |level, message, data| {
@@ -283,35 +285,40 @@ impl AppState {
                         "error" => LoggingLevel::Error,
                         _ => LoggingLevel::Info,
                     };
-                    
+
                     let log_data = data.unwrap_or_else(|| serde_json::json!({"message": message}));
-                    let _ = p.notify_logging_message(LoggingMessageNotificationParam {
-                        level: mcp_level,
-                        logger: Some("skillz".to_string()),
-                        data: log_data,
-                    }).await;
+                    let _ = p
+                        .notify_logging_message(LoggingMessageNotificationParam {
+                            level: mcp_level,
+                            logger: Some("skillz".to_string()),
+                            data: log_data,
+                        })
+                        .await;
                 }
             })
         });
-        
-        // Set up progress handler that forwards to MCP peer  
+
+        // Set up progress handler that forwards to MCP peer
         let peer_for_progress = peer.clone();
-        let progress_handler: runtime::ProgressHandler = Arc::new(move |current, total, message| {
-            let peer = peer_for_progress.clone();
-            Box::pin(async move {
-                if let Some(ref p) = *peer.read().await {
-                    let _ = p.notify_progress(ProgressNotificationParam {
-                        progress_token: rmcp::model::ProgressToken(
-                            rmcp::model::NumberOrString::String("tool_progress".into())
-                        ),
-                        progress: current as f64 / total as f64 * 100.0,
-                        total: Some(100.0),
-                        message,
-                    }).await;
-                }
-            })
-        });
-        
+        let progress_handler: runtime::ProgressHandler =
+            Arc::new(move |current, total, message| {
+                let peer = peer_for_progress.clone();
+                Box::pin(async move {
+                    if let Some(ref p) = *peer.read().await {
+                        let _ = p
+                            .notify_progress(ProgressNotificationParam {
+                                progress_token: rmcp::model::ProgressToken(
+                                    rmcp::model::NumberOrString::String("tool_progress".into()),
+                                ),
+                                progress: current as f64 / total as f64 * 100.0,
+                                total: Some(100.0),
+                                message,
+                            })
+                            .await;
+                    }
+                })
+            });
+
         // Set up elicitation handler that forwards to MCP peer
         let peer_for_elicit = peer.clone();
         let elicitation_handler: runtime::ElicitationHandler = Arc::new(move |message, schema| {
@@ -321,29 +328,42 @@ impl AppState {
                     // Convert JSON schema to ElicitationSchema
                     let schema_obj = match schema.as_object() {
                         Some(obj) => obj.clone(),
-                        None => return Ok(serde_json::json!({"action": "error", "error": "Schema must be a JSON object"})),
-                    };
-                    let elicit_schema = match rmcp::model::ElicitationSchema::from_json_schema(schema_obj) {
-                        Ok(s) => s,
-                        Err(e) => return Ok(serde_json::json!({"action": "error", "error": format!("Invalid schema: {}", e)})),
-                    };
-                    
-                    // Forward elicitation request to MCP client
-                    match p.create_elicitation(rmcp::model::CreateElicitationRequestParam {
-                        message,
-                        requested_schema: elicit_schema,
-                    }).await {
-                        Ok(result) => {
-                            Ok(serde_json::json!({
-                                "action": match result.action {
-                                    rmcp::model::ElicitationAction::Accept => "accept",
-                                    rmcp::model::ElicitationAction::Decline => "decline",
-                                    rmcp::model::ElicitationAction::Cancel => "cancel",
-                                },
-                                "content": result.content
-                            }))
+                        None => {
+                            return Ok(
+                                serde_json::json!({"action": "error", "error": "Schema must be a JSON object"}),
+                            )
                         }
-                        Err(e) => Ok(serde_json::json!({"action": "error", "error": e.to_string()}))
+                    };
+                    let elicit_schema = match rmcp::model::ElicitationSchema::from_json_schema(
+                        schema_obj,
+                    ) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            return Ok(
+                                serde_json::json!({"action": "error", "error": format!("Invalid schema: {}", e)}),
+                            )
+                        }
+                    };
+
+                    // Forward elicitation request to MCP client
+                    match p
+                        .create_elicitation(rmcp::model::CreateElicitationRequestParam {
+                            message,
+                            requested_schema: elicit_schema,
+                        })
+                        .await
+                    {
+                        Ok(result) => Ok(serde_json::json!({
+                            "action": match result.action {
+                                rmcp::model::ElicitationAction::Accept => "accept",
+                                rmcp::model::ElicitationAction::Decline => "decline",
+                                rmcp::model::ElicitationAction::Cancel => "cancel",
+                            },
+                            "content": result.content
+                        })),
+                        Err(e) => {
+                            Ok(serde_json::json!({"action": "error", "error": e.to_string()}))
+                        }
                     }
                 } else {
                     Ok(serde_json::json!({"action": "error", "error": "No MCP peer available"}))
@@ -358,12 +378,13 @@ impl AppState {
             Box::pin(async move {
                 if let Some(ref p) = *peer.read().await {
                     // Parse the params into CreateMessageRequestParam
-                    let request: rmcp::model::CreateMessageRequestParam = 
-                        serde_json::from_value(params).map_err(|e| anyhow::anyhow!("Invalid params: {}", e))?;
-                    
+                    let request: rmcp::model::CreateMessageRequestParam =
+                        serde_json::from_value(params)
+                            .map_err(|e| anyhow::anyhow!("Invalid params: {}", e))?;
+
                     match p.create_message(request).await {
                         Ok(result) => Ok(serde_json::to_value(result)?),
-                        Err(e) => Ok(serde_json::json!({"error": e.to_string()}))
+                        Err(e) => Ok(serde_json::json!({"error": e.to_string()})),
                     }
                 } else {
                     Ok(serde_json::json!({"error": "No MCP peer available"}))
@@ -377,7 +398,7 @@ impl AppState {
             .with_progress_handler(progress_handler)
             .with_elicitation_handler(elicitation_handler)
             .with_sampling_handler(sampling_handler);
-        
+
         Self {
             registry,
             runtime,
@@ -387,19 +408,19 @@ impl AppState {
             client_caps: Arc::new(RwLock::new(McpClientCapabilities::default())),
         }
     }
-    
+
     /// Update the peer reference (called when we get a context)
     async fn update_peer(&self, new_peer: Peer<RoleServer>) {
         let mut peer = self.peer.write().await;
         *peer = Some(new_peer);
     }
-    
+
     /// Update client capabilities from MCP initialization
     async fn update_client_caps(&self, caps: McpClientCapabilities) {
         let mut client_caps = self.client_caps.write().await;
         *client_caps = caps;
     }
-    
+
     /// Get current client capabilities
     async fn get_client_caps(&self) -> McpClientCapabilities {
         self.client_caps.read().await.clone()
@@ -415,7 +436,7 @@ impl AppState {
     )]
     async fn build_tool(&self, Parameters(args): Parameters<BuildToolArgs>) -> String {
         eprintln!("Building WASM tool: {}", args.name);
-        
+
         // Check if tool exists
         if self.registry.get_tool(&args.name).is_some() && !args.overwrite.unwrap_or(false) {
             return format!(
@@ -435,9 +456,9 @@ impl AppState {
                     Ok(bytes) => bytes,
                     Err(e) => return format!("Error reading compiled WASM: {}", e),
                 },
-            Err(e) => return format!("Compilation error: {}", e),
-        };
-        
+                Err(e) => return format!("Compilation error: {}", e),
+            };
+
         // Build manifest
         let mut manifest = registry::ToolManifest::new(
             args.name.clone(),
@@ -665,12 +686,12 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
     #[doc = "NOTE: This tool can ONLY call tools registered within Skillz, not tools from other MCP servers."]
     async fn call_tool(&self, Parameters(args): Parameters<CallToolArgs>) -> String {
         eprintln!("Calling tool: {}", args.tool_name);
-        
+
         let tool = match self.registry.get_tool(&args.tool_name) {
             Some(t) => t,
             None => return format!("Error: Tool '{}' not found", args.tool_name),
         };
-        
+
         let tool_args = args.arguments.unwrap_or(serde_json::json!({}));
 
         // Handle pipeline tools specially
@@ -680,7 +701,7 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
 
         let tool_config = tool.clone();
         let mut runtime = self.runtime.clone();
-        
+
         // Update runtime with actual MCP client capabilities
         let mcp_caps = self.get_client_caps().await;
         runtime.update_capabilities(runtime::ClientCapabilities {
@@ -1105,9 +1126,19 @@ pipeline(action: "create", name: "my_pipeline", steps: [
                 for (i, step) in steps.iter().enumerate() {
                     if self.registry.get_tool(&step.tool).is_none() {
                         let built_in_tools = [
-                            "build_tool", "register_script", "create_skill", "import_tool",
-                            "call_tool", "list_tools", "complete", "execute_code",
-                            "install_deps", "delete_tool", "test_validate", "pipeline", "memory",
+                            "build_tool",
+                            "register_script",
+                            "create_skill",
+                            "import_tool",
+                            "call_tool",
+                            "list_tools",
+                            "complete",
+                            "execute_code",
+                            "install_deps",
+                            "delete_tool",
+                            "test_validate",
+                            "pipeline",
+                            "memory",
                         ];
                         if !built_in_tools.contains(&step.tool.as_str()) {
                             return format!(
@@ -1153,7 +1184,10 @@ pipeline(action: "create", name: "my_pipeline", steps: [
                     .collect();
 
                 let filtered: Vec<_> = if let Some(ref tag) = args.tag {
-                    pipelines.into_iter().filter(|p| p.manifest.tags.contains(tag)).collect()
+                    pipelines
+                        .into_iter()
+                        .filter(|p| p.manifest.tags.contains(tag))
+                        .collect()
                 } else {
                     pipelines
                 };
@@ -1167,9 +1201,17 @@ pipeline(action: "create", name: "my_pipeline", steps: [
                     output.push_str(&format!(
                         "### {}\n- **Description:** {}\n- **Steps:** {}\n- **Tags:** {}\n\n",
                         p.name(),
-                        if p.description().is_empty() { "(none)" } else { p.description() },
+                        if p.description().is_empty() {
+                            "(none)"
+                        } else {
+                            p.description()
+                        },
                         p.pipeline_steps().len(),
-                        if p.manifest.tags.is_empty() { "(none)".to_string() } else { p.manifest.tags.join(", ") }
+                        if p.manifest.tags.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            p.manifest.tags.join(", ")
+                        }
                     ));
                 }
                 output
@@ -1182,7 +1224,10 @@ pipeline(action: "create", name: "my_pipeline", steps: [
 
                 if let Some(tool) = self.registry.get_tool(name) {
                     if *tool.tool_type() != ToolType::Pipeline {
-                        return format!("⚠️ '{}' is not a pipeline. Use delete_tool instead.", name);
+                        return format!(
+                            "⚠️ '{}' is not a pipeline. Use delete_tool instead.",
+                            name
+                        );
                     }
                 }
 
@@ -1192,14 +1237,18 @@ pipeline(action: "create", name: "my_pipeline", steps: [
                     Err(e) => format!("❌ Failed to delete pipeline: {}", e),
                 }
             }
-            _ => format!("Unknown action: '{}'. Use: create, list, delete", args.action),
+            _ => format!(
+                "Unknown action: '{}'. Use: create, list, delete",
+                args.action
+            ),
         }
     }
 
-
     // ==================== MEMORY / PERSISTENT STATE ====================
 
-    #[tool(description = r#"Manage knowledge entries. Actions: 'store' (save new), 'get' (by ID), 'update' (modify), 'delete' (remove), 'list' (browse), 'bulk_store' (create multiple), 'bulk_update' (update multiple). For bulk operations, use 'entries' array. Store any text, code, or notes for later retrieval."#)]
+    #[tool(
+        description = r#"Manage knowledge entries. Actions: 'store' (save new), 'get' (by ID), 'update' (modify), 'delete' (remove), 'list' (browse), 'bulk_store' (create multiple), 'bulk_update' (update multiple). For bulk operations, use 'entries' array. Store any text, code, or notes for later retrieval."#
+    )]
     async fn memory(&self, Parameters(args): Parameters<MemoryArgs>) -> String {
         match args.action.as_str() {
             "get" => {
@@ -1391,14 +1440,11 @@ impl ServerHandler for AppState {
     }
 
     /// Called when a client initializes - capture the peer for logging
-    async fn on_initialized(
-        &self,
-        ctx: NotificationContext<RoleServer>,
-    ) {
+    async fn on_initialized(&self, ctx: NotificationContext<RoleServer>) {
         // Get client info to check capabilities
         if let Some(client_info) = ctx.peer.peer_info() {
             eprintln!("MCP client initialized: {:?}", client_info.client_info.name);
-            
+
             // Check and store client capabilities
             let caps = &client_info.capabilities;
             let mcp_caps = McpClientCapabilities {
@@ -1406,17 +1452,17 @@ impl ServerHandler for AppState {
                 elicitation: caps.elicitation.is_some(),
                 roots: caps.roots.is_some(),
             };
-            
+
             eprintln!("  Client capabilities:");
             eprintln!("    - sampling: {}", mcp_caps.sampling);
             eprintln!("    - elicitation: {}", mcp_caps.elicitation);
             eprintln!("    - roots: {}", mcp_caps.roots);
-            
+
             self.update_client_caps(mcp_caps).await;
         } else {
             eprintln!("MCP client initialized (no client info available)");
         }
-        
+
         self.update_peer(ctx.peer).await;
     }
 
@@ -2124,10 +2170,10 @@ async fn main() -> Result<()> {
 
     // Get tools directory from env var or use ~/tools as default
     let tools_dir = std::env::var("TOOLS_DIR").unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-            format!("{}/tools", home)
-        });
-    
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        format!("{}/tools", home)
+    });
+
     let storage_dir = std::path::PathBuf::from(tools_dir);
     std::fs::create_dir_all(&storage_dir)?;
 
@@ -2135,13 +2181,12 @@ async fn main() -> Result<()> {
 
     let registry = registry::ToolRegistry::new(storage_dir.clone());
     let memory = memory::Memory::new(&storage_dir).await?;
-    
+
     // Create runtime with memory support
-    let runtime = runtime::ToolRuntime::new()?
-        .with_memory(memory.clone());
+    let runtime = runtime::ToolRuntime::new()?.with_memory(memory.clone());
 
     eprintln!("Memory database initialized (with runtime integration)");
-    
+
     let state = AppState::new(registry, runtime, memory);
 
     // Start hot reload if enabled

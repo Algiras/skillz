@@ -297,7 +297,9 @@ mod versioning {
         // Check versions list
         let versions = registry.list_versions("test_versioned").unwrap();
         assert!(versions.len() >= 2); // Current + at least one backup
-        assert!(versions.iter().any(|v| v.contains("1.0.1") && v.contains("current")));
+        assert!(versions
+            .iter()
+            .any(|v| v.contains("1.0.1") && v.contains("current")));
         assert!(versions.iter().any(|v| v.starts_with("1.0.0")));
     }
 

@@ -1,0 +1,46 @@
+# Skillz Coding Standards
+
+## Before Committing
+
+ALWAYS run these checks before committing any changes:
+
+```bash
+# 1. Format code
+cargo fmt --all
+
+# 2. Run clippy with warnings as errors
+cargo clippy --all-targets -- -D warnings
+
+# 3. Run tests
+cargo test
+```
+
+## Code Style
+
+- Use `#[allow(dead_code)]` for public API methods that aren't used internally
+- Follow Rust formatting conventions (enforced by `cargo fmt`)
+- No clippy warnings allowed (enforced by `-D warnings`)
+
+## Version Bumping
+
+When making changes, bump the version in `Cargo.toml`:
+- Patch version (0.4.x) for bug fixes and minor improvements
+- Minor version (0.x.0) for new features
+- Major version (x.0.0) for breaking changes
+
+## Testing
+
+- Add tests for new functionality in `tests/` directory
+- Use `tempfile::TempDir` for tests that need filesystem access
+- Run tests with `cargo test --release -- --test-threads=1`
+
+## Commit Messages
+
+Use conventional commit format:
+- `feat:` for new features
+- `fix:` for bug fixes
+- `docs:` for documentation
+- `refactor:` for code refactoring
+- `test:` for adding tests
+- `chore:` for maintenance tasks
+

@@ -14,10 +14,14 @@ Thank you for your interest in contributing to Skillz! This document provides gu
 ```bash
 # Clone the repository
 git clone https://github.com/Algiras/skillz.git
-cd skillz
+cd skillz/mcp-wasm-host
 
 # Install WASM target
 rustup target add wasm32-wasip1
+
+# Install pre-commit hook (recommended)
+chmod +x .github/hooks/pre-commit
+ln -sf ../../.github/hooks/pre-commit .git/hooks/pre-commit
 
 # Build the project
 cargo build
@@ -44,18 +48,23 @@ git checkout -b fix/your-bug-fix
 
 ### 3. Test Your Changes
 
-```bash
-# Build
-cargo build
+**IMPORTANT**: All these checks MUST pass before committing!
 
-# Run all tests
+```bash
+# 1. Format code (fixes issues automatically)
+cargo fmt --all
+
+# 2. Check formatting (CI uses this)
+cargo fmt --all -- --check
+
+# 3. Run clippy with warnings as errors (CI uses this)
+cargo clippy --all-targets -- -D warnings
+
+# 4. Run all tests
 cargo test
 
-# Check formatting
-cargo fmt --check
-
-# Run clippy
-cargo clippy --all-targets -- -D warnings
+# Or run the pre-commit hook manually:
+.github/hooks/pre-commit
 ```
 
 ### 4. Commit Your Changes
@@ -146,14 +155,21 @@ response = {
 - [x] Tool dependencies (pip/npm)
 - [x] Input/output schemas
 - [x] Tool annotations
-- [x] Completion API
 - [x] Code execution mode
+- [x] Tool versioning
+- [x] Hot reload
+- [x] Persistent memory
+- [x] Elicitation & Sampling
+- [x] Pipelines
+- [x] Tool import (Git/Gist)
+- [x] HTTP transport
 
 ### Future Features
 
-- [ ] Tool versioning
 - [ ] Tool marketplace
 - [ ] Better sandbox isolation (gVisor, Firecracker)
+- [ ] Agent mode (autonomous tool chaining)
+- [ ] MCP-to-MCP bridge
 
 ### Documentation
 

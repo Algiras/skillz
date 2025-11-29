@@ -552,7 +552,10 @@ fn test_sampling_conversation_history() {
     assert_eq!(request["params"]["messages"][0]["role"], "user");
     assert_eq!(request["params"]["messages"][1]["role"], "assistant");
     assert_eq!(request["params"]["messages"][2]["role"], "user");
-    assert_eq!(request["params"]["systemPrompt"], "You are a helpful assistant.");
+    assert_eq!(
+        request["params"]["systemPrompt"],
+        "You are a helpful assistant."
+    );
 }
 
 /// Test sampling error response (e.g., client doesn't support sampling)
@@ -567,7 +570,10 @@ fn test_sampling_error_response() {
     });
 
     assert!(error_response["result"]["error"].is_string());
-    assert_eq!(error_response["result"]["error"], "Sampling not supported by client");
+    assert_eq!(
+        error_response["result"]["error"],
+        "Sampling not supported by client"
+    );
 }
 
 // ==================== BIDIRECTIONAL COMMUNICATION TESTS ====================
@@ -634,7 +640,10 @@ sys.stdout.flush()
 
     let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(response["result"]["elicitation_available"], true);
-    assert_eq!(response["result"]["message"], "Elicitation supported - would prompt user");
+    assert_eq!(
+        response["result"]["message"],
+        "Elicitation supported - would prompt user"
+    );
 }
 
 /// Test bidirectional script that checks sampling capability

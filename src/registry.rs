@@ -766,14 +766,14 @@ impl ToolRegistry {
         if !tool_dir.exists() {
             anyhow::bail!("Tool directory does not exist: {}", tool_dir.display());
         }
-        
+
         // Load the tool from its directory
         let config = self.load_tool_from_dir(&tool_dir)?;
-        
+
         // Update in-memory cache
         let mut tools = self.tools.write().unwrap();
         tools.insert(name.to_string(), config);
-        
+
         eprintln!("Reloaded tool: {}", name);
         Ok(())
     }
@@ -907,7 +907,9 @@ impl ToolRegistry {
                     let entry = entry?;
                     let path = entry.path();
                     if let Some(ext) = path.extension() {
-                        if ["py", "js", "rb", "sh", "pl", "php"].contains(&ext.to_str().unwrap_or("")) {
+                        if ["py", "js", "rb", "sh", "pl", "php"]
+                            .contains(&ext.to_str().unwrap_or(""))
+                        {
                             let filename = path.file_name().unwrap();
                             fs::copy(&path, tool_dir.join(filename))?;
                         }
@@ -958,7 +960,7 @@ impl ToolRegistry {
 fn version_compare(a: &str, b: &str) -> std::cmp::Ordering {
     let a_parts: Vec<u32> = a.split('.').filter_map(|s| s.parse().ok()).collect();
     let b_parts: Vec<u32> = b.split('.').filter_map(|s| s.parse().ok()).collect();
-    
+
     for i in 0..3 {
         let a_val = a_parts.get(i).unwrap_or(&0);
         let b_val = b_parts.get(i).unwrap_or(&0);

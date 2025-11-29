@@ -413,7 +413,10 @@ pub struct ScriptResult {
 
 /// Type alias for elicitation handler callback
 pub type ElicitationHandler = std::sync::Arc<
-    dyn Fn(String, Value) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>>
+    dyn Fn(
+            String,
+            Value,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>>
         + Send
         + Sync,
 >;
@@ -427,14 +430,22 @@ pub type SamplingHandler = std::sync::Arc<
 
 /// Type alias for logging handler callback (forwards logs to MCP client)
 pub type LoggingHandler = std::sync::Arc<
-    dyn Fn(String, String, Option<Value>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+    dyn Fn(
+            String,
+            String,
+            Option<Value>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
         + Send
         + Sync,
 >;
 
 /// Type alias for progress handler callback (forwards progress to MCP client)
 pub type ProgressHandler = std::sync::Arc<
-    dyn Fn(u64, u64, Option<String>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+    dyn Fn(
+            u64,
+            u64,
+            Option<String>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
         + Send
         + Sync,
 >;
@@ -533,7 +544,7 @@ impl ToolRuntime {
         self.progress_handler = Some(handler);
         self
     }
-    
+
     /// Update capabilities (for setting actual MCP client capabilities at runtime)
     pub fn update_capabilities(&mut self, caps: ClientCapabilities) {
         self.context.capabilities = caps;
@@ -706,7 +717,7 @@ impl ToolRuntime {
 
         // Keep stdin open for bidirectional communication (memory requests)
         let mut stdin = child.stdin.take().context("Failed to get stdin")?;
-        
+
         // Write initial request
         stdin.write_all(request_json.as_bytes())?;
         stdin.write_all(b"\n")?;
@@ -739,14 +750,15 @@ impl ToolRuntime {
                 if let Some(method) = &response.method {
                     // Check if it's a request (has id) vs notification (no id)
                     let is_request = response.id.is_some();
-                    
+
                     match method.as_str() {
                         // ===== Notifications (no response needed) =====
                         "log" | "logging/message" => {
                             if let Some(params) = response.params {
-                                if let Ok(log) = serde_json::from_value::<LogEntry>(params.clone()) {
+                                if let Ok(log) = serde_json::from_value::<LogEntry>(params.clone())
+                                {
                                     eprintln!("[{}] {}", log.level.to_uppercase(), log.message);
-                                    
+
                                     // Forward to MCP client if handler is set
                                     if let Some(ref handler) = self.logging_handler {
                                         let handle = tokio::runtime::Handle::current();
@@ -756,7 +768,7 @@ impl ToolRuntime {
                                         let data = log.data.clone();
                                         handle.block_on(handler(level, message, data));
                                     }
-                                    
+
                                     logs.push(log);
                                 }
                             }
@@ -770,7 +782,7 @@ impl ToolRuntime {
                                             prog.current, prog.total, msg
                                         );
                                     }
-                                    
+
                                     // Forward to MCP client if handler is set
                                     if let Some(ref handler) = self.progress_handler {
                                         let handle = tokio::runtime::Handle::current();
@@ -780,17 +792,18 @@ impl ToolRuntime {
                                         let message = prog.message.clone();
                                         handle.block_on(handler(current, total, message));
                                     }
-                                    
+
                                     progress.push(prog);
                                 }
                             }
                         }
-                        
+
                         // ===== Memory requests (need response) =====
                         "memory/get" if is_request => {
                             let result = if let Some(ref mem) = memory {
                                 if let Some(params) = response.params {
-                                    let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
+                                    let key =
+                                        params.get("key").and_then(|v| v.as_str()).unwrap_or("");
                                     // Use tokio Handle to run async from sync context
                                     let handle = tokio::runtime::Handle::current();
                                     match handle.block_on(mem.get(&tool_name, key)) {
@@ -803,7 +816,7 @@ impl ToolRuntime {
                             } else {
                                 serde_json::json!({"error": "Memory not available"})
                             };
-                            
+
                             let response_json = serde_json::json!({
                                 "jsonrpc": "2.0",
                                 "result": result,
@@ -813,11 +826,12 @@ impl ToolRuntime {
                             stdin.write_all(b"\n")?;
                             stdin.flush()?;
                         }
-                        
+
                         "memory/set" if is_request => {
                             let result = if let Some(ref mem) = memory {
                                 if let Some(params) = response.params {
-                                    let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
+                                    let key =
+                                        params.get("key").and_then(|v| v.as_str()).unwrap_or("");
                                     let value = params.get("value").cloned().unwrap_or(Value::Null);
                                     let handle = tokio::runtime::Handle::current();
                                     match handle.block_on(mem.set(&tool_name, key, value)) {
@@ -830,7 +844,7 @@ impl ToolRuntime {
                             } else {
                                 serde_json::json!({"error": "Memory not available"})
                             };
-                            
+
                             let response_json = serde_json::json!({
                                 "jsonrpc": "2.0",
                                 "result": result,
@@ -840,7 +854,7 @@ impl ToolRuntime {
                             stdin.write_all(b"\n")?;
                             stdin.flush()?;
                         }
-                        
+
                         "memory/list" if is_request => {
                             let result = if let Some(ref mem) = memory {
                                 let handle = tokio::runtime::Handle::current();
@@ -851,7 +865,7 @@ impl ToolRuntime {
                             } else {
                                 serde_json::json!({"error": "Memory not available"})
                             };
-                            
+
                             let response_json = serde_json::json!({
                                 "jsonrpc": "2.0",
                                 "result": result,
@@ -861,11 +875,12 @@ impl ToolRuntime {
                             stdin.write_all(b"\n")?;
                             stdin.flush()?;
                         }
-                        
+
                         "memory/delete" if is_request => {
                             let result = if let Some(ref mem) = memory {
                                 if let Some(params) = response.params {
-                                    let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
+                                    let key =
+                                        params.get("key").and_then(|v| v.as_str()).unwrap_or("");
                                     let handle = tokio::runtime::Handle::current();
                                     match handle.block_on(mem.delete(&tool_name, key)) {
                                         Ok(deleted) => serde_json::json!({"deleted": deleted}),
@@ -877,7 +892,7 @@ impl ToolRuntime {
                             } else {
                                 serde_json::json!({"error": "Memory not available"})
                             };
-                            
+
                             let response_json = serde_json::json!({
                                 "jsonrpc": "2.0",
                                 "result": result,
@@ -887,24 +902,28 @@ impl ToolRuntime {
                             stdin.write_all(b"\n")?;
                             stdin.flush()?;
                         }
-                        
+
                         // ===== Elicitation requests (user input via MCP) =====
                         "elicitation/create" if is_request => {
                             let result = if let Some(ref handler) = self.elicitation_handler {
                                 if let Some(params) = response.params {
-                                    let message = params.get("message")
+                                    let message = params
+                                        .get("message")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("Please provide input")
                                         .to_string();
-                                    let schema = params.get("requestedSchema")
+                                    let schema = params
+                                        .get("requestedSchema")
                                         .cloned()
                                         .unwrap_or(serde_json::json!({}));
-                                    
+
                                     let handle = tokio::runtime::Handle::current();
                                     let handler = handler.clone();
                                     match handle.block_on(handler(message, schema)) {
                                         Ok(response) => response,
-                                        Err(e) => serde_json::json!({"action": "error", "error": e.to_string()}),
+                                        Err(e) => {
+                                            serde_json::json!({"action": "error", "error": e.to_string()})
+                                        }
                                     }
                                 } else {
                                     serde_json::json!({"action": "error", "error": "Missing parameters"})
@@ -912,7 +931,7 @@ impl ToolRuntime {
                             } else {
                                 serde_json::json!({"action": "decline", "error": "Elicitation not supported by client"})
                             };
-                            
+
                             let response_json = serde_json::json!({
                                 "jsonrpc": "2.0",
                                 "result": result,
@@ -922,7 +941,7 @@ impl ToolRuntime {
                             stdin.write_all(b"\n")?;
                             stdin.flush()?;
                         }
-                        
+
                         // ===== Sampling requests (LLM completions via MCP) =====
                         "sampling/createMessage" if is_request => {
                             let result = if let Some(ref handler) = self.sampling_handler {
@@ -939,7 +958,7 @@ impl ToolRuntime {
                             } else {
                                 serde_json::json!({"error": "Sampling not supported by client"})
                             };
-                            
+
                             let response_json = serde_json::json!({
                                 "jsonrpc": "2.0",
                                 "result": result,
@@ -949,7 +968,7 @@ impl ToolRuntime {
                             stdin.write_all(b"\n")?;
                             stdin.flush()?;
                         }
-                        
+
                         _ => {
                             eprintln!("Unknown method: {}", method);
                             // If it's a request, send an error response
@@ -959,7 +978,8 @@ impl ToolRuntime {
                                     "error": {"code": -32601, "message": format!("Method not found: {}", method)},
                                     "id": response.id
                                 });
-                                stdin.write_all(serde_json::to_string(&response_json)?.as_bytes())?;
+                                stdin
+                                    .write_all(serde_json::to_string(&response_json)?.as_bytes())?;
                                 stdin.write_all(b"\n")?;
                                 stdin.flush()?;
                             }
@@ -983,7 +1003,7 @@ impl ToolRuntime {
                 }
             }
         }
-        
+
         // Close stdin to signal we're done
         drop(stdin);
 
