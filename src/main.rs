@@ -609,7 +609,11 @@ impl ServerHandler for AppState {
 
 impl AppState {
     fn get_guide_content(&self) -> String {
-        r##"# 🚀 Skillz Guide
+        let tools = self.registry.list_tools();
+        let wasm_tools: Vec<_> = tools.iter().filter(|t| t.tool_type == ToolType::Wasm).collect();
+        let script_tools: Vec<_> = tools.iter().filter(|t| t.tool_type == ToolType::Script).collect();
+        
+        let mut guide = String::from(r##"# 🚀 Skillz Guide
 
 ## Overview
 Skillz is a self-extending MCP server that allows you to build and execute custom tools at runtime.
@@ -618,25 +622,23 @@ Skillz is a self-extending MCP server that allows you to build and execute custo
 - 🦀 **WASM Tools** - Compiled from Rust, run in a WebAssembly sandbox
 - 📜 **Script Tools** - Any language (Python, Node.js, Ruby, etc.) via JSON-RPC 2.0
 
-## Tools
+---
+
+## Built-in Tools
 
 ### `build_tool` - Create WASM tools from Rust
 ```
-build_tool(
-  name: "my_tool",
-  code: "fn main() { println!(\"Hello!\"); }",
-  description: "My custom tool"
-)
+build_tool(name: "my_tool", code: "fn main() {...}", description: "...")
 ```
 
 ### `register_script` - Register any-language tools
 ```
-register_script(
-  name: "my_python_tool",
-  code: "...",  # See protocol resource for format
-  interpreter: "python3",
-  description: "My Python tool"
-)
+register_script(name: "my_tool", code: "...", interpreter: "python3", description: "...")
+```
+
+### `create_skill` - Step-by-step skill creation
+```
+create_skill(name: "my_tool", description: "...", step: 1, content: "...", skill_type: "wasm")
 ```
 
 ### `call_tool` - Execute any registered tool
@@ -645,16 +647,38 @@ call_tool(tool_name: "my_tool", arguments: {...})
 ```
 
 ### `list_tools` - List all registered tools
-```
-list_tools()
-```
-
 ### `test_validate` - Validate Rust code before building
-```
-test_validate(code: "...", test_compile: true)
-```
+### `add_root` / `list_roots` - Manage workspace roots
 
-## Quick Start
+---
+
+"##);
+
+        // Add dynamic registered tools section
+        if !wasm_tools.is_empty() || !script_tools.is_empty() {
+            guide.push_str("## 📦 Registered Tools\n\n");
+            
+            if !wasm_tools.is_empty() {
+                guide.push_str("### 🦀 WASM Tools\n\n");
+                for tool in &wasm_tools {
+                    guide.push_str(&format!("- **{}** - {}\n", tool.name, tool.description));
+                    guide.push_str(&format!("  ```\n  call_tool(tool_name: \"{}\")\n  ```\n\n", tool.name));
+                }
+            }
+            
+            if !script_tools.is_empty() {
+                guide.push_str("### 📜 Script Tools\n\n");
+                for tool in &script_tools {
+                    let interp = tool.interpreter.as_deref().unwrap_or("executable");
+                    guide.push_str(&format!("- **{}** [{}] - {}\n", tool.name, interp, tool.description));
+                    guide.push_str(&format!("  ```\n  call_tool(tool_name: \"{}\")\n  ```\n\n", tool.name));
+                }
+            }
+            
+            guide.push_str("---\n\n");
+        }
+
+        guide.push_str(r##"## Quick Start
 
 ### Creating a WASM Tool (Rust)
 1. Write Rust code with `fn main()`
@@ -666,8 +690,23 @@ test_validate(code: "...", test_compile: true)
 2. Use `register_script` with appropriate interpreter
 3. Use `call_tool` to execute
 
-See `skillz://examples` for code examples and `skillz://protocol` for the JSON-RPC format.
-"##.to_string()
+### Step-by-Step Creation
+1. `create_skill` with step=1 (Design)
+2. `create_skill` with step=2 (Implement)
+3. `create_skill` with step=3 (Test)
+4. `create_skill` with step=4 (Finalize)
+
+---
+
+## Resources
+
+- `skillz://guide` - This guide (updates with new tools!)
+- `skillz://examples` - Code examples for WASM and Script tools
+- `skillz://protocol` - JSON-RPC 2.0 protocol documentation
+- `skillz://tools/{name}` - Individual tool documentation
+"##);
+
+        guide
     }
 
     fn get_examples_content(&self) -> String {

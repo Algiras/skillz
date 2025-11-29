@@ -2,6 +2,7 @@
 
 <div align="center">
 
+[![CI](https://github.com/Algiras/skillz/actions/workflows/ci.yml/badge.svg)](https://github.com/Algiras/skillz/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![MCP](https://img.shields.io/badge/MCP-2024--11--05-blue.svg)](https://modelcontextprotocol.io/)
@@ -97,8 +98,8 @@ Built-in support for step-by-step reasoning with revision and branching capabili
 rustup target add wasm32-wasip1
 
 # Clone the repository
-git clone https://github.com/anthropics/skillz.git
-cd skillz/mcp-wasm-host
+git clone https://github.com/Algiras/skillz.git
+cd skillz
 
 # Build release
 cargo build --release
