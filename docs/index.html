@@ -840,41 +840,52 @@
         <div class="container">
             <div class="section-title">
                 <h2>⚡ Quick Install</h2>
-                <p>Get started in seconds with cargo</p>
+                <p>Get started in seconds</p>
             </div>
+
+            <div style="text-align: center; margin-bottom: 3rem;">
+                <a href="https://smithery.ai/mcp/install?name=skillz&config=%7B%22type%22%3A%22stdio%22%2C%22command%22%3A%22sh%22%2C%22args%22%3A%5B%22-c%22%2C%22curl%20-fsSL%20https%3A%2F%2Fraw.githubusercontent.com%2FAlgiras%2Fskillz%2Fmaster%2Finstall.sh%20%7C%20sh%20-s%20--%20latest%20run%22%5D%7D"
+                    style="display: inline-block; transition: transform 0.2s;">
+                    <img alt="Add to Cursor"
+                        src="https://img.shields.io/badge/Add%20to%20Cursor-Smithery-blue?style=for-the-badge&logo=cursor"
+                        height="40" />
+                </a>
+                <p style="margin-top: 1rem; color: var(--text-secondary); font-size: 0.9rem;">One-click configuration
+                    for Cursor</p>
+            </div>
+
             <div class="code-block" style="max-width: 700px; margin: 0 auto;">
                 <div class="code-header">
                     <span class="code-lang">
-                        <span>🦀</span>
-                        <span>Terminal</span>
+                        <span>🚀</span>
+                        <span>One-Line Install (Linux & macOS)</span>
                     </span>
                 </div>
                 <div class="code-content">
-                    <pre><code><span class="comment"># Install WASM target</span>
+                    <pre><code><span class="comment"># Install to /usr/local/bin</span>
+curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh
+
+<span class="comment"># Or run without installing (Zero-Install)</span>
+curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh -s -- latest run</code></pre>
+                </div>
+            </div>
+
+            <div style="margin-top: 3rem;">
+                <p style="color: var(--text-secondary); margin-bottom: 1rem; text-align: center;">Or install with Cargo
+                    (Rust):</p>
+                <div class="code-block" style="max-width: 700px; margin: 0 auto;">
+                    <div class="code-header">
+                        <span class="code-lang">
+                            <span>🦀</span>
+                            <span>Cargo Install</span>
+                        </span>
+                    </div>
+                    <div class="code-content">
+                        <pre><code><span class="comment"># Install WASM target</span>
 rustup target add wasm32-wasip1
 
 <span class="comment"># Install Skillz</span>
 cargo install skillz</code></pre>
-                </div>
-            </div>
-            <div style="margin-top: 2rem;">
-                <p style="color: var(--text-secondary); margin-bottom: 1rem; text-align: center;">Then add to your
-                    editor's MCP config:</p>
-                <div class="code-block" style="max-width: 500px; margin: 0 auto;">
-                    <div class="code-header">
-                        <span class="code-lang">
-                            <span>⚙️</span>
-                            <span>MCP Config</span>
-                        </span>
-                    </div>
-                    <div class="code-content">
-                        <pre><code>{
-  "mcpServers": {
-    "skillz": {
-      "command": "skillz"
-    }
-  }
-}</code></pre>
                     </div>
                 </div>
             </div>
@@ -906,8 +917,7 @@ cargo install skillz</code></pre>
                     <div class="feature-icon">🔥</div>
                     <h3>--hot-reload</h3>
                     <p>Watch tools directory for changes and auto-reload.
-                        <br><code
-                            style="font-size: 0.8em; color: var(--accent-secondary);">skillz --hot-reload</code>
+                        <br><code style="font-size: 0.8em; color: var(--accent-secondary);">skillz --hot-reload</code>
                     </p>
                 </div>
                 <div class="feature-card">
