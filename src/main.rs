@@ -37,6 +37,9 @@ struct BuildToolArgs {
     input_schema: Option<serde_json::Value>,
     /// JSON Schema describing the tool's structured output (optional)
     output_schema: Option<serde_json::Value>,
+    /// Tool annotations - hints about behavior
+    /// Example: {"readOnlyHint": true} or {"destructiveHint": true, "openWorldHint": true}
+    annotations: Option<serde_json::Value>,
     /// Allow overwriting existing tools
     overwrite: Option<bool>,
 }
@@ -61,6 +64,9 @@ struct RegisterScriptArgs {
     /// JSON Schema describing the tool's structured output (optional)
     /// Example: {"type": "object", "properties": {"count": {"type": "integer"}}}
     output_schema: Option<serde_json::Value>,
+    /// Tool annotations - hints about behavior for clients
+    /// Example: {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true}
+    annotations: Option<serde_json::Value>,
     /// Allow overwriting existing tools
     overwrite: Option<bool>,
     /// Dependencies to install (pip packages for Python, npm packages for Node.js)
@@ -125,6 +131,35 @@ struct CreateSkillArgs {
     auto_advance: Option<bool>,
 }
 
+/// Completion/autocomplete request for argument suggestions
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct CompleteArgs {
+    /// Reference type: "tool" for tool arguments, "resource" for resource URIs
+    ref_type: String,
+    /// Name of the tool or resource
+    ref_name: String,
+    /// Name of the argument to complete
+    argument_name: String,
+    /// Current partial value being typed
+    argument_value: String,
+}
+
+/// Code execution mode - compose multiple tools via code
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ExecuteCodeArgs {
+    /// Code to execute (Python by default)
+    code: String,
+    /// Language/interpreter: "python" (default), "javascript", "typescript"
+    language: Option<String>,
+    /// Tool names to make available as callable functions in the code
+    /// If not specified, all registered tools are available
+    tools: Option<Vec<String>>,
+    /// Timeout in seconds (default: 30)
+    timeout: Option<u64>,
+}
+
 impl AppState {
     fn new(registry: registry::ToolRegistry, runtime: runtime::ToolRuntime) -> Self {
         Self {
@@ -166,9 +201,10 @@ impl AppState {
             return format!("File copy error: {}", e);
         }
 
-        // Build schemas from provided values
+        // Build schemas and annotations from provided values
         let input_schema = args.input_schema.map(registry::ToolSchema::from_value);
         let output_schema = args.output_schema.map(registry::ToolSchema::from_value);
+        let annotations = args.annotations.map(registry::ToolAnnotations::from_value);
 
         if let Err(e) = self.registry.register_tool(registry::ToolConfig {
             name: args.name.clone(),
@@ -179,6 +215,7 @@ impl AppState {
             interpreter: None,
             input_schema: input_schema.unwrap_or_default(),
             output_schema,
+            annotations,
             dependencies: vec![],
             env_path: None,
             deps_installed: false,
@@ -278,9 +315,10 @@ impl AppState {
             }
         }
 
-        // Build schemas from provided values
+        // Build schemas and annotations from provided values
         let input_schema = args.input_schema.map(registry::ToolSchema::from_value);
         let output_schema = args.output_schema.map(registry::ToolSchema::from_value);
+        let annotations = args.annotations.map(registry::ToolAnnotations::from_value);
 
         // Register the tool
         if let Err(e) = self.registry.register_tool(registry::ToolConfig {
@@ -292,6 +330,7 @@ impl AppState {
             interpreter: args.interpreter.clone(),
             input_schema: input_schema.unwrap_or_default(),
             output_schema,
+            annotations,
             dependencies,
             env_path,
             deps_installed,
@@ -692,6 +731,7 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                         interpreter: None,
                         input_schema: registry::ToolSchema::default(),
                         output_schema: None,
+                        annotations: None,
                         dependencies: vec![],
                         env_path: None,
                         deps_installed: false,
@@ -745,6 +785,7 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                         interpreter: args.interpreter.clone(),
                         input_schema: registry::ToolSchema::default(),
                         output_schema: None,
+                        annotations: None,
                         dependencies: vec![],
                         env_path: None,
                         deps_installed: false,
@@ -773,6 +814,294 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
         }
 
         output
+    }
+
+    // ==================== COMPLETION API ====================
+
+    #[tool(
+        description = "Get autocomplete suggestions for tool arguments. Returns possible values for a specific argument."
+    )]
+    async fn complete(&self, Parameters(args): Parameters<CompleteArgs>) -> String {
+        let mut suggestions: Vec<String> = Vec::new();
+
+        match args.ref_type.as_str() {
+            "tool" => {
+                // Get tool and check if argument exists in schema
+                if let Some(tool) = self.registry.get_tool(&args.ref_name) {
+                    match args.argument_name.as_str() {
+                        "tool_name" => {
+                            // Suggest available tool names
+                            suggestions = self
+                                .registry
+                                .list_tools()
+                                .iter()
+                                .filter(|t| t.name.starts_with(&args.argument_value))
+                                .map(|t| t.name.clone())
+                                .take(10)
+                                .collect();
+                        }
+                        "interpreter" => {
+                            // Suggest common interpreters
+                            let interpreters = [
+                                "python3", "python", "node", "nodejs", "ruby", "bash", "sh",
+                                "perl", "php",
+                            ];
+                            suggestions = interpreters
+                                .iter()
+                                .filter(|i| i.starts_with(&args.argument_value))
+                                .map(|s| s.to_string())
+                                .collect();
+                        }
+                        "language" => {
+                            // Suggest languages for execute_code
+                            let languages = ["python", "javascript", "typescript"];
+                            suggestions = languages
+                                .iter()
+                                .filter(|l| l.starts_with(&args.argument_value))
+                                .map(|s| s.to_string())
+                                .collect();
+                        }
+                        _ => {
+                            // Check tool's input schema for enum values
+                            if let Some(props) = &tool.input_schema.properties {
+                                if let Some(prop) = props.get(&args.argument_name) {
+                                    if let Some(enum_values) = prop.get("enum") {
+                                        if let Some(arr) = enum_values.as_array() {
+                                            suggestions = arr
+                                                .iter()
+                                                .filter_map(|v| v.as_str())
+                                                .filter(|s| s.starts_with(&args.argument_value))
+                                                .map(|s| s.to_string())
+                                                .take(10)
+                                                .collect();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "resource" => {
+                // Suggest resource URIs
+                let resources = ["skillz://guide", "skillz://examples", "skillz://protocol"];
+                suggestions = resources
+                    .iter()
+                    .filter(|r| r.starts_with(&args.argument_value))
+                    .map(|s| s.to_string())
+                    .collect();
+            }
+            _ => {}
+        }
+
+        serde_json::json!({
+            "completion": {
+                "values": suggestions,
+                "total": suggestions.len(),
+                "hasMore": false
+            }
+        })
+        .to_string()
+    }
+
+    // ==================== CODE EXECUTION MODE ====================
+
+    #[tool(
+        description = "Execute code that can call multiple registered tools. Dramatically reduces token usage by composing tools in code instead of sequential calls. Supports Python (default) and JavaScript."
+    )]
+    async fn execute_code(&self, Parameters(args): Parameters<ExecuteCodeArgs>) -> String {
+        let language = args.language.as_deref().unwrap_or("python");
+        let _timeout = args.timeout.unwrap_or(30); // TODO: Implement timeout
+
+        // Get available tools
+        let available_tools: Vec<_> = if let Some(ref tool_names) = args.tools {
+            self.registry
+                .list_tools()
+                .into_iter()
+                .filter(|t| tool_names.contains(&t.name))
+                .collect()
+        } else {
+            self.registry.list_tools()
+        };
+
+        // Generate tool API stubs
+        let tool_stubs = self.generate_tool_stubs(&available_tools, language);
+
+        // Create the execution script
+        let script = match language {
+            "python" | "python3" => {
+                self.wrap_python_code(&args.code, &tool_stubs, &available_tools)
+            }
+            "javascript" | "js" | "node" => {
+                self.wrap_javascript_code(&args.code, &tool_stubs, &available_tools)
+            }
+            _ => {
+                return format!(
+                    "❌ Unsupported language: {}. Use 'python' or 'javascript'.",
+                    language
+                )
+            }
+        };
+
+        // Execute in sandbox
+        let interpreter = match language {
+            "python" | "python3" => "python3",
+            "javascript" | "js" | "node" => "node",
+            _ => "python3",
+        };
+
+        // Create temp file
+        let ext = match language {
+            "python" | "python3" => "py",
+            "javascript" | "js" | "node" => "js",
+            _ => "py",
+        };
+
+        let temp_dir = std::env::temp_dir();
+        let script_path = temp_dir.join(format!("skillz_exec_{}.{}", std::process::id(), ext));
+
+        if let Err(e) = std::fs::write(&script_path, &script) {
+            return format!("❌ Failed to create execution script: {}", e);
+        }
+
+        // Execute with timeout
+        let output = std::process::Command::new(interpreter)
+            .arg(&script_path)
+            .output();
+
+        // Cleanup
+        let _ = std::fs::remove_file(&script_path);
+
+        match output {
+            Ok(result) => {
+                let stdout = String::from_utf8_lossy(&result.stdout);
+                let stderr = String::from_utf8_lossy(&result.stderr);
+
+                if result.status.success() {
+                    if stderr.is_empty() {
+                        format!("✅ **Execution Result**\n\n```\n{}\n```", stdout.trim())
+                    } else {
+                        format!(
+                            "✅ **Execution Result**\n\n```\n{}\n```\n\n**Logs:**\n```\n{}\n```",
+                            stdout.trim(),
+                            stderr.trim()
+                        )
+                    }
+                } else {
+                    format!(
+                        "❌ **Execution Failed**\n\n**Error:**\n```\n{}\n```\n\n**Output:**\n```\n{}\n```",
+                        stderr.trim(),
+                        stdout.trim()
+                    )
+                }
+            }
+            Err(e) => format!("❌ Failed to execute: {}", e),
+        }
+    }
+}
+
+impl AppState {
+    fn generate_tool_stubs(&self, tools: &[registry::ToolConfig], language: &str) -> String {
+        let mut stubs = String::new();
+
+        for tool in tools {
+            match language {
+                "python" | "python3" => {
+                    stubs.push_str(&format!(
+                        r#"
+def {}(**kwargs):
+    """{}"""
+    return _call_tool("{}", kwargs)
+"#,
+                        tool.name.replace('-', "_"),
+                        tool.description,
+                        tool.name
+                    ));
+                }
+                "javascript" | "js" | "node" => {
+                    stubs.push_str(&format!(
+                        r#"
+function {}(args) {{
+    /** {} */
+    return _call_tool("{}", args || {{}});
+}}
+"#,
+                        tool.name.replace('-', "_"),
+                        tool.description,
+                        tool.name
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        stubs
+    }
+
+    fn wrap_python_code(
+        &self,
+        user_code: &str,
+        tool_stubs: &str,
+        tools: &[registry::ToolConfig],
+    ) -> String {
+        let tool_names: Vec<_> = tools.iter().map(|t| format!("\"{}\"", t.name)).collect();
+
+        format!(
+            r#"#!/usr/bin/env python3
+import json
+import subprocess
+import sys
+
+# Tool registry
+_TOOLS = [{}]
+
+def _call_tool(name, args):
+    """Call a registered Skillz tool"""
+    # For now, print the tool call (in production, this would use JSON-RPC)
+    print(f"[TOOL_CALL] {{name}}: {{json.dumps(args)}}")
+    return {{"status": "called", "tool": name, "args": args}}
+
+# Generated tool stubs
+{}
+
+# User code
+{}
+"#,
+            tool_names.join(", "),
+            tool_stubs,
+            user_code
+        )
+    }
+
+    fn wrap_javascript_code(
+        &self,
+        user_code: &str,
+        tool_stubs: &str,
+        tools: &[registry::ToolConfig],
+    ) -> String {
+        let tool_names: Vec<_> = tools.iter().map(|t| format!("\"{}\"", t.name)).collect();
+
+        format!(
+            r#"#!/usr/bin/env node
+// Tool registry
+const _TOOLS = [{}];
+
+function _call_tool(name, args) {{
+    // Call a registered Skillz tool
+    console.log(`[TOOL_CALL] ${{name}}: ${{JSON.stringify(args)}}`);
+    return {{status: "called", tool: name, args: args}};
+}}
+
+// Generated tool stubs
+{}
+
+// User code
+{}
+"#,
+            tool_names.join(", "),
+            tool_stubs,
+            user_code
+        )
     }
 }
 

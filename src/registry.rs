@@ -16,6 +16,80 @@ pub enum ToolType {
     Script,
 }
 
+/// Tool annotations - hints about tool behavior for clients
+/// Based on MCP specification: https://modelcontextprotocol.io/specification/2025-06-18/schema
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ToolAnnotations {
+    /// Human-readable title for the tool (display name)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// If true, the tool performs read-only operations (doesn't modify state)
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "readOnlyHint"
+    )]
+    pub read_only_hint: Option<bool>,
+    /// If true, the tool may perform destructive updates (delete, overwrite)
+    /// Only meaningful when read_only_hint is false
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "destructiveHint"
+    )]
+    pub destructive_hint: Option<bool>,
+    /// If true, calling the tool repeatedly with same args has no additional effect
+    /// Only meaningful when read_only_hint is false
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "idempotentHint"
+    )]
+    pub idempotent_hint: Option<bool>,
+    /// If true, this tool may interact with external systems (network, APIs, etc.)
+    /// If false, the tool's domain of interaction is closed/local
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "openWorldHint"
+    )]
+    pub open_world_hint: Option<bool>,
+}
+
+impl ToolAnnotations {
+    /// Create annotations for a read-only tool
+    pub fn read_only() -> Self {
+        Self {
+            read_only_hint: Some(true),
+            destructive_hint: Some(false),
+            ..Default::default()
+        }
+    }
+
+    /// Create annotations for a tool that modifies state
+    pub fn read_write(destructive: bool, idempotent: bool) -> Self {
+        Self {
+            read_only_hint: Some(false),
+            destructive_hint: Some(destructive),
+            idempotent_hint: Some(idempotent),
+            ..Default::default()
+        }
+    }
+
+    /// Create annotations for a tool that accesses external systems
+    pub fn open_world() -> Self {
+        Self {
+            open_world_hint: Some(true),
+            ..Default::default()
+        }
+    }
+
+    /// Create from JSON value
+    pub fn from_value(value: serde_json::Value) -> Self {
+        serde_json::from_value(value).unwrap_or_default()
+    }
+}
+
 /// JSON Schema definition for tool inputs/outputs
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolSchema {
@@ -82,6 +156,9 @@ pub struct ToolConfig {
     /// Output schema - JSON Schema describing structured output (optional, for structured responses)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<ToolSchema>,
+    /// Tool annotations - hints about behavior (readOnly, destructive, etc.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ToolAnnotations>,
     /// Dependencies for script tools (pip packages, npm modules, etc.)
     #[serde(default)]
     pub dependencies: Vec<String>,
