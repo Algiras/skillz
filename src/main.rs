@@ -33,6 +33,10 @@ struct BuildToolArgs {
     name: String,
     code: String,
     description: String,
+    /// JSON Schema describing the tool's input arguments
+    input_schema: Option<serde_json::Value>,
+    /// JSON Schema describing the tool's structured output (optional)
+    output_schema: Option<serde_json::Value>,
     /// Allow overwriting existing tools
     overwrite: Option<bool>,
 }
@@ -51,6 +55,12 @@ struct RegisterScriptArgs {
     interpreter: Option<String>,
     /// File extension for the script (py, js, rb, sh, etc.)
     extension: Option<String>,
+    /// JSON Schema describing the tool's input arguments
+    /// Example: {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+    input_schema: Option<serde_json::Value>,
+    /// JSON Schema describing the tool's structured output (optional)
+    /// Example: {"type": "object", "properties": {"count": {"type": "integer"}}}
+    output_schema: Option<serde_json::Value>,
     /// Allow overwriting existing tools
     overwrite: Option<bool>,
     /// Dependencies to install (pip packages for Python, npm packages for Node.js)
@@ -156,6 +166,10 @@ impl AppState {
             return format!("File copy error: {}", e);
         }
 
+        // Build schemas from provided values
+        let input_schema = args.input_schema.map(registry::ToolSchema::from_value);
+        let output_schema = args.output_schema.map(registry::ToolSchema::from_value);
+
         if let Err(e) = self.registry.register_tool(registry::ToolConfig {
             name: args.name.clone(),
             description: args.description.clone(),
@@ -163,7 +177,8 @@ impl AppState {
             wasm_path: dest,
             script_path: std::path::PathBuf::new(),
             interpreter: None,
-            schema: serde_json::json!({ "type": "object" }),
+            input_schema: input_schema.unwrap_or_default(),
+            output_schema,
             dependencies: vec![],
             env_path: None,
             deps_installed: false,
@@ -263,6 +278,10 @@ impl AppState {
             }
         }
 
+        // Build schemas from provided values
+        let input_schema = args.input_schema.map(registry::ToolSchema::from_value);
+        let output_schema = args.output_schema.map(registry::ToolSchema::from_value);
+
         // Register the tool
         if let Err(e) = self.registry.register_tool(registry::ToolConfig {
             name: args.name.clone(),
@@ -271,7 +290,8 @@ impl AppState {
             wasm_path: std::path::PathBuf::new(),
             script_path: script_path.clone(),
             interpreter: args.interpreter.clone(),
-            schema: serde_json::json!({ "type": "object" }),
+            input_schema: input_schema.unwrap_or_default(),
+            output_schema,
             dependencies,
             env_path,
             deps_installed,
@@ -670,7 +690,8 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                         wasm_path: dest,
                         script_path: std::path::PathBuf::new(),
                         interpreter: None,
-                        schema: serde_json::json!({ "type": "object" }),
+                        input_schema: registry::ToolSchema::default(),
+                        output_schema: None,
                         dependencies: vec![],
                         env_path: None,
                         deps_installed: false,
@@ -722,7 +743,8 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                         wasm_path: std::path::PathBuf::new(),
                         script_path: script_path.clone(),
                         interpreter: args.interpreter.clone(),
-                        schema: serde_json::json!({ "type": "object" }),
+                        input_schema: registry::ToolSchema::default(),
+                        output_schema: None,
                         dependencies: vec![],
                         env_path: None,
                         deps_installed: false,

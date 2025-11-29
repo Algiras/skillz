@@ -1,6 +1,6 @@
 [package]
 name = "skillz"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Algimantas Krasauskas"]
 description = "Self-extending MCP server - build and execute custom AI tools at runtime"
@@ -30,6 +30,9 @@ rmcp-macros = "0.9.1"
 
 [dev-dependencies]
 tempfile = "3.8"
+proptest = "1.4"
+assert_cmd = "2.0"
+predicates = "3.0"
 
 [profile.release]
 opt-level = 3

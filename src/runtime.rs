@@ -2,13 +2,251 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use wasmtime::{Engine, Linker, Module, Store};
 use wasmtime_wasi::preview1::{self, WasiP1Ctx};
 use wasmtime_wasi::{pipe::MemoryOutputPipe, WasiCtxBuilder};
 
 use crate::registry::{ToolConfig, ToolType};
+
+// ==================== Sandbox Configuration ====================
+
+/// Sandbox mode for script execution
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub enum SandboxMode {
+    /// No sandboxing - scripts run with normal permissions
+    #[default]
+    None,
+    /// Use bubblewrap (bwrap) for Linux sandboxing
+    Bubblewrap,
+    /// Use firejail for Linux sandboxing
+    Firejail,
+    /// Use nsjail for Linux sandboxing (most restrictive)
+    Nsjail,
+}
+
+/// Configuration for script sandboxing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxConfig {
+    /// Sandbox mode to use
+    pub mode: SandboxMode,
+    /// Allow network access in sandbox
+    pub allow_network: bool,
+    /// Directories to allow read access (in addition to workspace roots)
+    pub read_paths: Vec<PathBuf>,
+    /// Directories to allow write access
+    pub write_paths: Vec<PathBuf>,
+    /// Memory limit in MB (0 = unlimited)
+    pub memory_limit_mb: u64,
+    /// CPU time limit in seconds (0 = unlimited)
+    pub time_limit_secs: u64,
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            mode: SandboxMode::None,
+            allow_network: false,
+            read_paths: vec![],
+            write_paths: vec![],
+            memory_limit_mb: 512,
+            time_limit_secs: 30,
+        }
+    }
+}
+
+impl SandboxConfig {
+    /// Check if the required sandbox tool is available
+    pub fn check_available(&self) -> Result<bool> {
+        match self.mode {
+            SandboxMode::None => Ok(true),
+            SandboxMode::Bubblewrap => Ok(Command::new("bwrap").arg("--version").output().is_ok()),
+            SandboxMode::Firejail => Ok(Command::new("firejail").arg("--version").output().is_ok()),
+            SandboxMode::Nsjail => Ok(Command::new("nsjail").arg("--version").output().is_ok()),
+        }
+    }
+
+    /// Wrap a command with sandbox
+    pub fn wrap_command(&self, cmd: &mut Command, script_path: &Path, roots: &[String]) {
+        if self.mode == SandboxMode::None {
+            return;
+        }
+
+        let program = cmd.get_program().to_string_lossy().to_string();
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+
+        // Build sandbox command
+        let sandbox_args = match self.mode {
+            SandboxMode::None => return,
+            SandboxMode::Bubblewrap => self.build_bwrap_args(script_path, roots),
+            SandboxMode::Firejail => self.build_firejail_args(script_path, roots),
+            SandboxMode::Nsjail => self.build_nsjail_args(script_path, roots),
+        };
+
+        // Replace the command with sandboxed version
+        let sandbox_cmd = match self.mode {
+            SandboxMode::Bubblewrap => "bwrap",
+            SandboxMode::Firejail => "firejail",
+            SandboxMode::Nsjail => "nsjail",
+            SandboxMode::None => unreachable!(),
+        };
+
+        // Clear and rebuild command
+        *cmd = Command::new(sandbox_cmd);
+        for arg in sandbox_args {
+            cmd.arg(arg);
+        }
+        cmd.arg("--").arg(&program);
+        for arg in args {
+            cmd.arg(arg);
+        }
+    }
+
+    fn build_bwrap_args(&self, script_path: &Path, roots: &[String]) -> Vec<String> {
+        let mut args = vec![
+            "--unshare-all".to_string(),
+            "--die-with-parent".to_string(),
+            "--ro-bind".to_string(),
+            "/usr".to_string(),
+            "--ro-bind".to_string(),
+            "/lib".to_string(),
+            "--ro-bind".to_string(),
+            "/lib64".to_string(),
+            "--ro-bind".to_string(),
+            "/bin".to_string(),
+            "--ro-bind".to_string(),
+            "/sbin".to_string(),
+            "--proc".to_string(),
+            "/proc".to_string(),
+            "--dev".to_string(),
+            "/dev".to_string(),
+            "--tmpfs".to_string(),
+            "/tmp".to_string(),
+        ];
+
+        // Add read-only access to script
+        if let Some(parent) = script_path.parent() {
+            args.push("--ro-bind".to_string());
+            args.push(parent.to_string_lossy().to_string());
+            args.push(parent.to_string_lossy().to_string());
+        }
+
+        // Add workspace roots
+        for root in roots {
+            args.push("--bind".to_string());
+            args.push(root.clone());
+            args.push(root.clone());
+        }
+
+        // Add custom read paths
+        for path in &self.read_paths {
+            args.push("--ro-bind".to_string());
+            args.push(path.to_string_lossy().to_string());
+            args.push(path.to_string_lossy().to_string());
+        }
+
+        // Add custom write paths
+        for path in &self.write_paths {
+            args.push("--bind".to_string());
+            args.push(path.to_string_lossy().to_string());
+            args.push(path.to_string_lossy().to_string());
+        }
+
+        // Network isolation
+        if !self.allow_network {
+            args.push("--unshare-net".to_string());
+        }
+
+        args
+    }
+
+    fn build_firejail_args(&self, _script_path: &Path, roots: &[String]) -> Vec<String> {
+        let mut args = vec![
+            "--quiet".to_string(),
+            "--private-tmp".to_string(),
+            "--nogroups".to_string(),
+            "--nonewprivs".to_string(),
+            "--noroot".to_string(),
+            "--seccomp".to_string(),
+        ];
+
+        // Network isolation
+        if !self.allow_network {
+            args.push("--net=none".to_string());
+        }
+
+        // Add workspace roots as whitelist
+        for root in roots {
+            args.push(format!("--whitelist={}", root));
+        }
+
+        // Memory limit
+        if self.memory_limit_mb > 0 {
+            args.push(format!(
+                "--rlimit-as={}",
+                self.memory_limit_mb * 1024 * 1024
+            ));
+        }
+
+        // Time limit
+        if self.time_limit_secs > 0 {
+            args.push(format!("--timeout=00:00:{:02}", self.time_limit_secs));
+        }
+
+        args
+    }
+
+    fn build_nsjail_args(&self, script_path: &Path, roots: &[String]) -> Vec<String> {
+        let mut args = vec![
+            "--mode".to_string(),
+            "o".to_string(), // Once mode
+            "--quiet".to_string(),
+            "--disable_clone_newcgroup".to_string(),
+            "-R".to_string(),
+            "/usr".to_string(),
+            "-R".to_string(),
+            "/lib".to_string(),
+            "-R".to_string(),
+            "/lib64".to_string(),
+            "-R".to_string(),
+            "/bin".to_string(),
+        ];
+
+        // Add script directory
+        if let Some(parent) = script_path.parent() {
+            args.push("-R".to_string());
+            args.push(parent.to_string_lossy().to_string());
+        }
+
+        // Add workspace roots with write access
+        for root in roots {
+            args.push("-B".to_string());
+            args.push(root.clone());
+        }
+
+        // Network isolation
+        if !self.allow_network {
+            args.push("--disable_clone_newnet".to_string());
+        }
+
+        // Resource limits
+        if self.memory_limit_mb > 0 {
+            args.push("--cgroup_mem_max".to_string());
+            args.push((self.memory_limit_mb * 1024 * 1024).to_string());
+        }
+
+        if self.time_limit_secs > 0 {
+            args.push("--time_limit".to_string());
+            args.push(self.time_limit_secs.to_string());
+        }
+
+        args
+    }
+}
 
 // ==================== JSON-RPC 2.0 Protocol ====================
 
@@ -144,15 +382,52 @@ pub struct ScriptResult {
 pub struct ToolRuntime {
     engine: Engine,
     context: ExecutionContext,
+    sandbox_config: SandboxConfig,
 }
 
 impl ToolRuntime {
     pub fn new() -> Result<Self> {
         let engine = Engine::default();
+
+        // Check for sandbox mode from environment
+        let sandbox_mode = match std::env::var("SKILLZ_SANDBOX").as_deref() {
+            Ok("bubblewrap") | Ok("bwrap") => SandboxMode::Bubblewrap,
+            Ok("firejail") => SandboxMode::Firejail,
+            Ok("nsjail") => SandboxMode::Nsjail,
+            _ => SandboxMode::None,
+        };
+
+        let sandbox_config = SandboxConfig {
+            mode: sandbox_mode,
+            allow_network: std::env::var("SKILLZ_SANDBOX_NETWORK").is_ok(),
+            ..Default::default()
+        };
+
         Ok(Self {
             engine,
             context: ExecutionContext::default(),
+            sandbox_config,
         })
+    }
+
+    /// Create runtime with custom sandbox configuration
+    pub fn with_sandbox(sandbox_config: SandboxConfig) -> Result<Self> {
+        let engine = Engine::default();
+        Ok(Self {
+            engine,
+            context: ExecutionContext::default(),
+            sandbox_config,
+        })
+    }
+
+    /// Get current sandbox configuration
+    pub fn sandbox_config(&self) -> &SandboxConfig {
+        &self.sandbox_config
+    }
+
+    /// Check if sandbox is available
+    pub fn sandbox_available(&self) -> bool {
+        self.sandbox_config.check_available().unwrap_or(false)
     }
 
     /// Execute a tool based on its type
@@ -208,6 +483,9 @@ impl ToolRuntime {
         let mut context = self.context.clone();
         context.tool_name = config.name.clone();
 
+        // Save roots for sandbox (before context is moved)
+        let sandbox_roots = context.roots.clone();
+
         // Build the JSON-RPC request with context
         let request = JsonRpcRequest {
             jsonrpc: "2.0",
@@ -257,6 +535,10 @@ impl ToolRuntime {
         } else {
             Command::new(&config.script_path)
         };
+
+        // Apply sandbox wrapper if configured
+        self.sandbox_config
+            .wrap_command(&mut cmd, &config.script_path, &sandbox_roots);
 
         // Set up the process
         let mut child = cmd

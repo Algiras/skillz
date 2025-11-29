@@ -16,6 +16,49 @@ pub enum ToolType {
     Script,
 }
 
+/// JSON Schema definition for tool inputs/outputs
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ToolSchema {
+    /// JSON Schema type (e.g., "object", "string", "number")
+    #[serde(rename = "type", default)]
+    pub schema_type: String,
+    /// Schema properties (for object type)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub properties: Option<serde_json::Value>,
+    /// Required properties
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required: Vec<String>,
+    /// Schema description
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Additional JSON Schema fields
+    #[serde(flatten)]
+    pub extra: serde_json::Value,
+}
+
+impl ToolSchema {
+    /// Create an empty/any schema
+    pub fn any() -> Self {
+        Self {
+            schema_type: "object".to_string(),
+            properties: None,
+            required: vec![],
+            description: None,
+            extra: serde_json::Value::Object(Default::default()),
+        }
+    }
+
+    /// Create schema from JSON value
+    pub fn from_value(value: serde_json::Value) -> Self {
+        serde_json::from_value(value).unwrap_or_else(|_| Self::any())
+    }
+
+    /// Convert to JSON value
+    pub fn to_value(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::json!({"type": "object"}))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolConfig {
     pub name: String,
@@ -33,8 +76,12 @@ pub struct ToolConfig {
     /// If empty, the script is executed directly (must be executable)
     #[serde(default)]
     pub interpreter: Option<String>,
-    /// JSON Schema for tool arguments
-    pub schema: serde_json::Value,
+    /// Input schema - JSON Schema describing expected arguments
+    #[serde(default)]
+    pub input_schema: ToolSchema,
+    /// Output schema - JSON Schema describing structured output (optional, for structured responses)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<ToolSchema>,
     /// Dependencies for script tools (pip packages, npm modules, etc.)
     #[serde(default)]
     pub dependencies: Vec<String>,

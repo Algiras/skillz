@@ -1,185 +1,163 @@
-# Security & Isolation
+# Security Model
 
-## WASM Isolation - YES, Tools Are Isolated ✅
+Skillz implements a layered security approach for tool execution.
 
-### Current Implementation
+## WASM Tools (Rust)
 
-The MCP WASM Host uses **Wasmtime** with WASI for secure, sandboxed execution:
+WASM tools run in a **fully sandboxed WebAssembly environment** via Wasmtime:
 
-```rust
-// From runtime.rs
-let wasi = WasiCtxBuilder::new()
-    .inherit_stderr()
-    .stdout(stdout.clone())
-    .build_p1();
-```
+- **Memory Isolation**: Each WASM module has its own linear memory, isolated from the host
+- **No File System Access**: By default, WASM tools cannot access the file system
+- **No Network Access**: WASM tools cannot make network requests
+- **Capability-Based Security**: Only explicitly granted capabilities are available
+- **Deterministic Execution**: Same inputs produce same outputs
 
-### What's Isolated:
+### Wasmtime Security Features
 
-1. **Memory** - Each WASM module has its own linear memory space
-   - Cannot access host memory
-   - Cannot read other tools' memory
-   - No buffer overflow exploits
+- Bounds-checking on all memory accesses
+- Stack overflow protection
+- No direct access to host memory or functions
+- Sandboxed WASI implementation
 
-2. **File System** - No file system access by default
-   - Tools run in pure WASI environment
-   - No ability to read/write files
-   - Cannot access host directories
+## Script Tools (Python, Node.js, etc.)
 
-3. **Network** - No network access
-   - No sockets
-   - No HTTP requests
-   - Complete network isolation
+Script tools run as **separate processes** with several security measures:
 
-4. **Process** - Cannot spawn processes
-   - No system calls
-   - No shell access
-   - Cannot execute arbitrary code
+### Default Security
 
-### What's Available:
+- **Filtered Environment**: Only safe environment variables are passed (HOME, USER, LANG, PATH, TERM)
+- **Execution Context**: Scripts receive structured context via JSON-RPC, not direct access
+- **Process Isolation**: Each script runs in its own process
 
-✅ **Stdout** - Captured via `MemoryOutputPipe`  
-✅ **Stderr** - Inherited from host (for debugging)  
-❌ **Stdin** - Not connected  
-❌ **Environment Variables** - Not passed  
-❌ **File System** - No access  
-❌ **Network** - No access
+### Optional Sandbox Mode
 
-### Security Model:
+For enhanced security, Skillz supports Linux sandboxing tools:
 
-```
-┌──────────────────────────────────┐
-│    MCP WASM Host (Rust)          │
-│  ┌────────────────────────────┐  │
-│  │  Wasmtime Engine           │  │
-│  │  ┌──────────────────────┐  │  │
-│  │  │  WASM Module         │  │  │
-│  │  │  - Isolated Memory   │  │  │
-│  │  │  - No FS Access      │  │  │
-│  │  │  - No Network        │  │  │
-│  │  │  - Stdout Only       │  │  │
-│  │  └──────────────────────┘  │  │
-│  └────────────────────────────┘  │
-└──────────────────────────────────┘
-```
-
-## Persistence - YES, Tools Persist to Filesystem ✅
-
-### What's Persisted:
-
-1. **WASM Binaries** - `tools/*.wasm`
-2. **Tool Metadata** - `tools/manifest.json`
-
-### Current State:
+#### Bubblewrap (bwrap)
 
 ```bash
-$ ls -lh tools/
-total 416
--rwxr-xr-x  65K greeter.wasm
--rwxr-xr-x  65K hello_world.wasm
--rw-r--r-- 359B manifest.json
--rwxr-xr-x  65K my_calculator.wasm
+# Enable bubblewrap sandboxing
+export SKILLZ_SANDBOX=bubblewrap
 ```
 
-### Manifest Format:
+Features:
+- Linux namespace isolation (PID, network, mount, user)
+- Read-only bind mounts for system directories
+- Workspace roots are writable
+- Network disabled by default
 
-```json
-{
-  "greeter": {
-    "name": "greeter",
-    "description": "A greeting tool",
-    "wasm_path": "/path/to/tools/greeter.wasm",
-    "schema": {"type": "object"}
-  },
-  "my_calculator": {
-    "name": "my_calculator",
-    "description": "Calculator v2 - improved",
-    "wasm_path": "/path/to/tools/my_calculator.wasm",
-    "schema": {"type": "object"}
-  }
-}
+#### Firejail
+
+```bash
+# Enable firejail sandboxing
+export SKILLZ_SANDBOX=firejail
 ```
 
-### Persistence Flow:
+Features:
+- Seccomp system call filtering
+- Private /tmp
+- No root privileges
+- Memory and time limits
+- Whitelist-based file access
 
-```
-1. build_tool
-   ↓
-2. Compile Rust → WASM
-   ↓
-3. Copy to tools/[name].wasm
-   ↓
-4. Save to manifest.json
-   ↓
-5. PERSIST ✅
-```
+#### Nsjail
 
-### Server Startup:
-
-```rust
-// From registry.rs
-let manifest_path = storage_dir.join("manifest.json");
-
-if manifest_path.exists() {
-    // Load existing tools
-    let loaded = serde_json::from_str(&content)?;
-    eprintln!("Loaded {} tools from manifest", loaded.len());
-}
+```bash
+# Enable nsjail sandboxing (most restrictive)
+export SKILLZ_SANDBOX=nsjail
 ```
 
-**Console Output:**
-```
-Loaded 1 tools from manifest
-MCP WASM Host started
-```
+Features:
+- Comprehensive namespace isolation
+- Cgroup resource limits
+- Strict capability dropping
+- Suitable for multi-tenant environments
 
-## Enhancing Isolation (Future)
+### Enabling Network in Sandbox
 
-### Recommended Improvements:
-
-1. **Resource Limits**
-```rust
-// Add to runtime.rs
-let wasi = WasiCtxBuilder::new()
-    .set_fuel(1_000_000)?  // CPU limit
-    .set_memory_limit(10_485_760)?  // 10 MB
-    .build_p1();
+```bash
+# Allow network access in sandboxed scripts
+export SKILLZ_SANDBOX_NETWORK=1
 ```
 
-2. **Filesystem Sandboxing** (if needed)
-```rust
-use cap_std::fs::Dir;
+## Dependency Management Security
 
-let wasi = WasiCtxBuilder::new()
-    .preopened_dir(Dir::open_ambient_dir("/tmp/tool-sandbox")?, "/sandbox")?
-    .build_p1();
-```
+### Virtual Environments
 
-3. **Environment Variables** (for secrets)
-```rust
-let wasi = WasiCtxBuilder::new()
-    .env("API_KEY", secret_value)?
-    .build_p1();
-```
+- Python tools use isolated `venv` environments
+- Node.js tools use isolated `node_modules` directories
+- Dependencies are installed per-tool, not globally
+- Environment paths are stored in tool configuration
 
-## Summary
+### Risks
 
-| Feature | Status | Details |
-|---------|--------|---------|
-| **Memory Isolation** | ✅ Yes | WASM linear memory, no host access |
-| **Process Isolation** | ✅ Yes | No system calls, no process spawning |
-| **Network Isolation** | ✅ Yes | No sockets, completely offline |
-| **FS Isolation** | ✅ Yes | No file system access |
-| **Tool Persistence** | ✅ Yes | `tools/*.wasm` + `manifest.json` |
-| **Survives Restart** | ✅ Yes | Tools loaded from manifest on startup |
-| **Resource Limits** | ⚠️  Future | CPU/memory limits planned |
-| **Sandboxed FS** | ⚠️  Future | Optional `/sandbox` directory |
+- Dependencies are installed from public registries (PyPI, npm)
+- Supply chain attacks are possible
+- Review dependencies before adding them
 
-## Security Verdict: **PRODUCTION READY** 🔒
+## Best Practices
 
-The current isolation is strong enough for untrusted code:
-- ✅ Cannot escape sandbox
-- ✅ Cannot access sensitive data
-- ✅ Cannot harm host system
-- ✅ Tools persist safely to disk
-- ✅ All state survives restarts
+### For Tool Authors
+
+1. **Validate all inputs** - Never trust arguments blindly
+2. **Use minimal dependencies** - Fewer deps = smaller attack surface
+3. **Handle errors gracefully** - Don't leak sensitive info in errors
+4. **Follow least privilege** - Request only needed capabilities
+
+### For Server Operators
+
+1. **Use sandbox mode on untrusted tools**
+   ```bash
+   export SKILLZ_SANDBOX=firejail  # or bubblewrap, nsjail
+   ```
+
+2. **Restrict workspace roots**
+   - Only add directories the AI actually needs
+   - Avoid adding home directory or system paths
+
+3. **Review tools before enabling**
+   - Check `~/tools/manifest.json` for registered tools
+   - Review script code in `~/tools/scripts/`
+
+4. **Monitor resource usage**
+   - WASM tools have bounded memory
+   - Script tools can be limited via sandbox
+
+5. **Keep Skillz updated**
+   ```bash
+   cargo install skillz --force
+   ```
+
+## Threat Model
+
+### Trusted
+
+- The MCP client (Cursor, Claude Desktop, etc.)
+- The user approving tool creation
+
+### Semi-Trusted
+
+- AI-generated code (reviewed by user before execution)
+- Registered tools (persisted and can be audited)
+
+### Untrusted
+
+- External dependencies (pip/npm packages)
+- Network responses (when network is enabled)
+
+## Reporting Security Issues
+
+Please report security vulnerabilities via GitHub Security Advisories:
+https://github.com/Algiras/skillz/security/advisories
+
+Do not open public issues for security vulnerabilities.
+
+## Security Comparison
+
+| Feature | WASM Tools | Script Tools (Default) | Script Tools (Sandbox) |
+|---------|------------|------------------------|------------------------|
+| Memory Isolation | ✅ Full | ❌ Process only | ✅ Namespace |
+| File System | ❌ None | ⚠️ Limited to roots | ✅ Whitelist |
+| Network | ❌ None | ⚠️ Full access | ✅ Disabled |
+| System Calls | ✅ WASI only | ❌ All allowed | ✅ Seccomp |
+| Resource Limits | ✅ Wasmtime | ❌ None | ✅ Cgroups |
