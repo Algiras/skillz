@@ -83,9 +83,6 @@ curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | 
 # 🎯 Install specific version
 curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh -s -- v0.4.0
 
-# ⚡ Run without installing (npx-style)
-curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh -s -- latest run
-
 # Or install from crates.io
 cargo install skillz
 
@@ -117,7 +114,11 @@ Your support enables new features and improvements!
 
 ### Cursor IDE
 
-Add to `~/.cursor/mcp.json`:
+<a href="cursor://anysphere.cursor-deeplink/mcp/install?name=skillz&config=eyJ0eXBlIjogInN0ZGlvIiwgImNvbW1hbmQiOiAic2tpbGx6In0=">
+  <img src="https://cursor.com/deeplink/mcp-install-dark.png" alt="Add to Cursor" height="32" />
+</a>
+
+Or add manually to `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -148,39 +149,6 @@ Add to `~/.cursor/mcp.json`:
 ```
 
 > **Note**: If `skillz` isn't in your PATH, use: `~/.cargo/bin/skillz`
-
-### Zero-Install Mode (Run on Demand)
-
-You can run Skillz without installing it, similar to `npx`.
-
-<div align="center">
-
-<a href="cursor://anysphere.cursor-deeplink/mcp/install?name=skillz&config=eyJ0eXBlIjogInN0ZGlvIiwgImNvbW1hbmQiOiAic2giLCAiYXJncyI6IFsiLWMiLCAiY3VybCAtZnNTTCBodHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vQWxnaXJhcy9za2lsbHovbWFzdGVyL2luc3RhbGwuc2ggfCBzaCAtcyAtLSBsYXRlc3QgcnVuIl19">
-  <img src="https://cursor.com/deeplink/mcp-install-dark.png" alt="Add to Cursor" height="40" />
-</a>
-
-<br>
-<br>
-
-[![Crates.io](https://img.shields.io/crates/v/skillz.svg)](https://crates.io/crates/skillz)
-[![Downloads](https://img.shields.io/crates/d/skillz.svg)](https://crates.io/crates/skillz)
-
-</div>
-
-Or manually configure:
-
-```json
-{
-  "mcpServers": {
-    "skillz": {
-      "command": "sh",
-      "args": ["-c", "curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh -s -- latest run"]
-    }
-  }
-}
-```
-
-> **💡 Environment Variables**: The installer automatically passes all environment variables to the Skillz binary. You can set `SKILLZ_ROOTS` or `SKILLZ_SANDBOX` in your editor config, and they will work as expected.
 
 ### HTTP Server Mode *(v0.4.0+)*
 
