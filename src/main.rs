@@ -3,22 +3,21 @@ mod registry;
 mod runtime;
 
 use anyhow::Result;
+use registry::ToolType;
+use rmcp::schemars::JsonSchema;
 use rmcp::{
-    ServerHandler, ServiceExt, RoleServer,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        ServerCapabilities, ServerInfo, 
-        ListResourcesResult, ReadResourceResult, ReadResourceRequestParam,
-        RawResource, ResourceContents, PaginatedRequestParam, AnnotateAble,
+        AnnotateAble, ListResourcesResult, PaginatedRequestParam, RawResource,
+        ReadResourceRequestParam, ReadResourceResult, ResourceContents, ServerCapabilities,
+        ServerInfo,
     },
     service::RequestContext,
     tool, tool_handler, tool_router,
     transport::stdio,
-    ErrorData as McpError,
+    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
 };
-use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use registry::ToolType;
 
 // Define the state
 #[derive(Clone)]
@@ -77,7 +76,6 @@ struct AddRootArgs {
     path: String,
 }
 
-
 /// Sequential skill creation - build tools step by step
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
@@ -111,26 +109,34 @@ impl AppState {
 #[tool_router]
 impl AppState {
     // ==================== WASM TOOLS (Rust) ====================
-    
-    #[tool(description = "Compile and register a new WASM tool from Rust code. Set overwrite=true to update existing tools.")]
+
+    #[tool(
+        description = "Compile and register a new WASM tool from Rust code. Set overwrite=true to update existing tools."
+    )]
     async fn build_tool(&self, Parameters(args): Parameters<BuildToolArgs>) -> String {
         eprintln!("Building WASM tool: {}", args.name);
-        
+
         // Check if tool exists
         if self.registry.get_tool(&args.name).is_some() && !args.overwrite.unwrap_or(false) {
-            return format!("Error: Tool '{}' already exists. Use overwrite=true to update it.", args.name);
+            return format!(
+                "Error: Tool '{}' already exists. Use overwrite=true to update it.",
+                args.name
+            );
         }
-        
+
         let wasm_path = match builder::Builder::compile_tool(&args.name, &args.code) {
             Ok(path) => path,
             Err(e) => return format!("Compilation error: {}", e),
         };
-        
-        let dest = self.registry.storage_dir().join(format!("{}.wasm", args.name));
+
+        let dest = self
+            .registry
+            .storage_dir()
+            .join(format!("{}.wasm", args.name));
         if let Err(e) = std::fs::copy(&wasm_path, &dest) {
             return format!("File copy error: {}", e);
         }
-        
+
         if let Err(e) = self.registry.register_tool(registry::ToolConfig {
             name: args.name.clone(),
             description: args.description.clone(),
@@ -151,19 +157,26 @@ impl AppState {
     }
 
     // ==================== SCRIPT TOOLS (Any Language) ====================
-    
-    #[tool(description = "Register a script tool in any language (Python, Node.js, Ruby, Bash, etc.). Scripts communicate via JSON-RPC 2.0 over stdin/stdout.")]
+
+    #[tool(
+        description = "Register a script tool in any language (Python, Node.js, Ruby, Bash, etc.). Scripts communicate via JSON-RPC 2.0 over stdin/stdout."
+    )]
     async fn register_script(&self, Parameters(args): Parameters<RegisterScriptArgs>) -> String {
         eprintln!("Registering script tool: {}", args.name);
-        
+
         // Check if tool exists
         if self.registry.get_tool(&args.name).is_some() && !args.overwrite.unwrap_or(false) {
-            return format!("Error: Tool '{}' already exists. Use overwrite=true to update it.", args.name);
+            return format!(
+                "Error: Tool '{}' already exists. Use overwrite=true to update it.",
+                args.name
+            );
         }
-        
+
         // Determine file extension
-        let ext = args.extension.clone().unwrap_or_else(|| {
-            match args.interpreter.as_deref() {
+        let ext = args
+            .extension
+            .clone()
+            .unwrap_or_else(|| match args.interpreter.as_deref() {
                 Some("python3") | Some("python") => "py".to_string(),
                 Some("node") | Some("nodejs") => "js".to_string(),
                 Some("ruby") => "rb".to_string(),
@@ -171,15 +184,17 @@ impl AppState {
                 Some("perl") => "pl".to_string(),
                 Some("php") => "php".to_string(),
                 _ => "script".to_string(),
-            }
-        });
-        
+            });
+
         // Save the script
-        let script_path = self.registry.scripts_dir().join(format!("{}.{}", args.name, ext));
+        let script_path = self
+            .registry
+            .scripts_dir()
+            .join(format!("{}.{}", args.name, ext));
         if let Err(e) = std::fs::write(&script_path, &args.code) {
             return format!("Error saving script: {}", e);
         }
-        
+
         // Make script executable (Unix)
         #[cfg(unix)]
         {
@@ -190,7 +205,7 @@ impl AppState {
                 let _ = std::fs::set_permissions(&script_path, perms);
             }
         }
-        
+
         // Register the tool
         if let Err(e) = self.registry.register_tool(registry::ToolConfig {
             name: args.name.clone(),
@@ -203,35 +218,49 @@ impl AppState {
         }) {
             return format!("Registration error: {}", e);
         }
-        
-        let interpreter_info = args.interpreter
+
+        let interpreter_info = args
+            .interpreter
             .map(|i| format!(" (via {})", i))
             .unwrap_or_default();
-        
+
         if args.overwrite.unwrap_or(false) {
-            format!("📜 Script Tool '{}'{} updated successfully\n\nPath: {}", args.name, interpreter_info, script_path.display())
+            format!(
+                "📜 Script Tool '{}'{} updated successfully\n\nPath: {}",
+                args.name,
+                interpreter_info,
+                script_path.display()
+            )
         } else {
-            format!("📜 Script Tool '{}'{} registered\n\nPath: {}", args.name, interpreter_info, script_path.display())
+            format!(
+                "📜 Script Tool '{}'{} registered\n\nPath: {}",
+                args.name,
+                interpreter_info,
+                script_path.display()
+            )
         }
     }
 
     // ==================== TOOL EXECUTION ====================
-    
-    #[tool(description = "Call a registered tool (WASM or Script). For script tools, arguments are passed via JSON-RPC 2.0.")]
+
+    #[tool(
+        description = "Call a registered tool (WASM or Script). For script tools, arguments are passed via JSON-RPC 2.0."
+    )]
     async fn call_tool(&self, Parameters(args): Parameters<CallToolArgs>) -> String {
         eprintln!("Calling tool: {}", args.tool_name);
-        
+
         let tool = match self.registry.get_tool(&args.tool_name) {
             Some(t) => t,
             None => return format!("Error: Tool '{}' not found", args.tool_name),
         };
-        
+
         let tool_args = args.arguments.unwrap_or(serde_json::json!({}));
         let tool_config = tool.clone();
         let runtime = self.runtime.clone();
-        
+
         // Use spawn_blocking for sync operations
-        match tokio::task::spawn_blocking(move || runtime.call_tool(&tool_config, tool_args)).await {
+        match tokio::task::spawn_blocking(move || runtime.call_tool(&tool_config, tool_args)).await
+        {
             Ok(Ok(result)) => result.to_string(),
             Ok(Err(e)) => format!("Error executing tool: {}", e),
             Err(e) => format!("Task join error: {}", e),
@@ -239,19 +268,25 @@ impl AppState {
     }
 
     // ==================== TOOL LISTING ====================
-    
+
     #[tool(description = "List all available tools (both WASM and Script tools)")]
     async fn list_tools(&self) -> String {
         let tools = self.registry.list_tools();
         if tools.is_empty() {
             return "No tools registered yet.\n\n• Use `build_tool` to create Rust/WASM tools\n• Use `register_script` to create tools in any language".to_string();
         }
-        
-        let wasm_tools: Vec<_> = tools.iter().filter(|t| t.tool_type == ToolType::Wasm).collect();
-        let script_tools: Vec<_> = tools.iter().filter(|t| t.tool_type == ToolType::Script).collect();
-        
+
+        let wasm_tools: Vec<_> = tools
+            .iter()
+            .filter(|t| t.tool_type == ToolType::Wasm)
+            .collect();
+        let script_tools: Vec<_> = tools
+            .iter()
+            .filter(|t| t.tool_type == ToolType::Script)
+            .collect();
+
         let mut output = format!("📦 Available Tools ({} total)\n\n", tools.len());
-        
+
         if !wasm_tools.is_empty() {
             output.push_str(&format!("### 🦀 WASM Tools ({})\n\n", wasm_tools.len()));
             for tool in wasm_tools {
@@ -259,29 +294,32 @@ impl AppState {
             }
             output.push('\n');
         }
-        
+
         if !script_tools.is_empty() {
             output.push_str(&format!("### 📜 Script Tools ({})\n\n", script_tools.len()));
             for tool in script_tools {
                 let interpreter = tool.interpreter.as_deref().unwrap_or("executable");
-                output.push_str(&format!("• **{}** [{}] - {}\n", tool.name, interpreter, tool.description));
+                output.push_str(&format!(
+                    "• **{}** [{}] - {}\n",
+                    tool.name, interpreter, tool.description
+                ));
             }
             output.push('\n');
         }
-        
+
         output.push_str("\n💡 Use `call_tool(tool_name: \"...\")` to execute any tool.");
         output
     }
 
     // ==================== VALIDATION ====================
-    
+
     #[tool(description = "Validate Rust code using sequential analysis before building")]
     async fn test_validate(&self, Parameters(args): Parameters<TestValidateArgs>) -> String {
         eprintln!("Validating code with sequential analysis...");
-        
+
         let mut steps = Vec::new();
         let mut issues: Vec<String> = Vec::new();
-        
+
         // Step 1: Check for main function
         steps.push("Step 1: Checking for main() function");
         if !args.code.contains("fn main()") {
@@ -289,17 +327,20 @@ impl AppState {
         } else {
             steps.push("  ✓ Found main() function");
         }
-        
+
         // Step 2: Check for basic syntax issues
         steps.push("Step 2: Checking basic syntax");
         let brace_open = args.code.matches('{').count();
         let brace_close = args.code.matches('}').count();
         if brace_open != brace_close {
-            issues.push(format!("❌ Mismatched braces: {} open, {} close", brace_open, brace_close));
+            issues.push(format!(
+                "❌ Mismatched braces: {} open, {} close",
+                brace_open, brace_close
+            ));
         } else {
             steps.push("  ✓ Braces are balanced");
         }
-        
+
         // Step 3: Check for unsafe code
         steps.push("Step 3: Checking for unsafe code");
         if args.code.contains("unsafe") {
@@ -307,7 +348,7 @@ impl AppState {
         } else {
             steps.push("  ✓ No unsafe code detected");
         }
-        
+
         // Step 4: Optional compile test
         if args.test_compile.unwrap_or(false) {
             steps.push("Step 4: Test compilation");
@@ -316,13 +357,13 @@ impl AppState {
                 Err(e) => issues.push(format!("❌ Compilation failed: {}", e)),
             }
         }
-        
+
         // Build report
         let mut report = String::from("🔍 Sequential Validation Report\n\n");
         for step in &steps {
             report.push_str(&format!("{}\n", step));
         }
-        
+
         report.push_str("\n📊 Summary:\n");
         if issues.is_empty() {
             report.push_str("✅ All checks passed! Code is ready to build.\n");
@@ -332,26 +373,35 @@ impl AppState {
                 report.push_str(&format!("   {}\n", issue));
             }
         }
-        
+
         report
     }
 
     // ==================== ROOT MANAGEMENT ====================
-    
-    #[tool(description = "Add a workspace root. Scripts will have access to files in these directories.")]
+
+    #[tool(
+        description = "Add a workspace root. Scripts will have access to files in these directories."
+    )]
     async fn add_root(&self, Parameters(args): Parameters<AddRootArgs>) -> String {
         let path = std::path::Path::new(&args.path);
         if !path.exists() {
-            return format!("Warning: Path '{}' does not exist, but added anyway.", args.path);
+            return format!(
+                "Warning: Path '{}' does not exist, but added anyway.",
+                args.path
+            );
         }
-        
-        let canonical = path.canonicalize()
+
+        let canonical = path
+            .canonicalize()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| args.path.clone());
-        
+
         // Note: In a real implementation, we'd need interior mutability (Arc<RwLock<>>)
         // For now, we just acknowledge the root
-        format!("📁 Root added: {}\n\nScript tools will receive this path in their execution context.", canonical)
+        format!(
+            "📁 Root added: {}\n\nScript tools will receive this path in their execution context.",
+            canonical
+        )
     }
 
     #[tool(description = "List current workspace roots that scripts have access to.")]
@@ -362,12 +412,15 @@ impl AppState {
             output.push_str(&format!("• {}\n", root));
         }
         output.push_str(&format!("\n📂 Tools Directory: {}", context.tools_dir));
-        output.push_str(&format!("\n📂 Working Directory: {}", context.working_directory));
+        output.push_str(&format!(
+            "\n📂 Working Directory: {}",
+            context.working_directory
+        ));
         output
     }
 
     // ==================== SEQUENTIAL SKILL CREATION ====================
-    
+
     #[tool(description = r#"Create skills step-by-step with guided workflow.
 
 Steps:
@@ -385,16 +438,23 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
             4 => "✅ Finalize",
             _ => "❓ Unknown",
         };
-        
+
         let mut output = format!("## {} Skill: `{}`\n\n", step_name, args.name);
         output.push_str(&format!("**Step {}/4:** {}\n\n", args.step, step_name));
-        output.push_str(&format!("**Type:** {}\n", if args.skill_type == "wasm" { "🦀 WASM (Rust)" } else { "📜 Script" }));
+        output.push_str(&format!(
+            "**Type:** {}\n",
+            if args.skill_type == "wasm" {
+                "🦀 WASM (Rust)"
+            } else {
+                "📜 Script"
+            }
+        ));
         if let Some(ref interp) = args.interpreter {
             output.push_str(&format!("**Interpreter:** {}\n", interp));
         }
         output.push_str(&format!("**Description:** {}\n\n", args.description));
         output.push_str("---\n\n");
-        
+
         match args.step {
             1 => {
                 // Design phase - just capture the design
@@ -408,11 +468,13 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                 output.push_str("### Implementation\n\n```\n");
                 output.push_str(&args.content);
                 output.push_str("\n```\n\n");
-                
+
                 if args.skill_type == "wasm" {
                     // Basic Rust validation
                     if !args.content.contains("fn main()") {
-                        output.push_str("⚠️ Warning: No `fn main()` found. WASM tools need a main function.\n");
+                        output.push_str(
+                            "⚠️ Warning: No `fn main()` found. WASM tools need a main function.\n",
+                        );
                     } else {
                         output.push_str("✅ Code looks valid. Next: Call with step=3 to test.\n");
                     }
@@ -423,16 +485,22 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
             3 => {
                 // Test phase - actually try to build/validate
                 output.push_str("### Testing\n\n");
-                
+
                 if args.skill_type == "wasm" {
-                    match builder::Builder::compile_tool(&format!("{}_test", args.name), &args.content) {
+                    match builder::Builder::compile_tool(
+                        &format!("{}_test", args.name),
+                        &args.content,
+                    ) {
                         Ok(_) => {
                             output.push_str("✅ **Compilation successful!**\n\n");
                             output.push_str("Code compiles to WASM without errors.\n");
                             output.push_str("Next: Call with step=4 to finalize and register.\n");
                         }
                         Err(e) => {
-                            output.push_str(&format!("❌ **Compilation failed:**\n\n```\n{}\n```\n\n", e));
+                            output.push_str(&format!(
+                                "❌ **Compilation failed:**\n\n```\n{}\n```\n\n",
+                                e
+                            ));
                             output.push_str("Fix the errors and call step=3 again.\n");
                         }
                     }
@@ -443,8 +511,12 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                         output.push_str("Contains JSON-RPC structure.\n");
                         output.push_str("Next: Call with step=4 to finalize and register.\n");
                     } else {
-                        output.push_str("⚠️ **Warning:** Script may not follow JSON-RPC 2.0 protocol.\n");
-                        output.push_str("Ensure it reads JSON from stdin and outputs JSON response.\n");
+                        output.push_str(
+                            "⚠️ **Warning:** Script may not follow JSON-RPC 2.0 protocol.\n",
+                        );
+                        output.push_str(
+                            "Ensure it reads JSON from stdin and outputs JSON response.\n",
+                        );
                         output.push_str("See `skillz://protocol` for details.\n");
                     }
                 }
@@ -452,19 +524,23 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
             4 => {
                 // Finalize - actually register the tool
                 output.push_str("### Finalizing\n\n");
-                
+
                 if args.skill_type == "wasm" {
                     // Build and register WASM tool
-                    let wasm_path = match builder::Builder::compile_tool(&args.name, &args.content) {
+                    let wasm_path = match builder::Builder::compile_tool(&args.name, &args.content)
+                    {
                         Ok(path) => path,
                         Err(e) => return format!("❌ Failed to compile: {}", e),
                     };
-                    
-                    let dest = self.registry.storage_dir().join(format!("{}.wasm", args.name));
+
+                    let dest = self
+                        .registry
+                        .storage_dir()
+                        .join(format!("{}.wasm", args.name));
                     if let Err(e) = std::fs::copy(&wasm_path, &dest) {
                         return format!("❌ Failed to copy: {}", e);
                     }
-                    
+
                     if let Err(e) = self.registry.register_tool(registry::ToolConfig {
                         name: args.name.clone(),
                         description: args.description.clone(),
@@ -476,10 +552,16 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                     }) {
                         return format!("❌ Failed to register: {}", e);
                     }
-                    
-                    output.push_str(&format!("🎉 **Skill `{}` created successfully!**\n\n", args.name));
+
+                    output.push_str(&format!(
+                        "🎉 **Skill `{}` created successfully!**\n\n",
+                        args.name
+                    ));
                     output.push_str("**Type:** 🦀 WASM Tool\n");
-                    output.push_str(&format!("**Usage:** `call_tool(tool_name: \"{}\")`\n", args.name));
+                    output.push_str(&format!(
+                        "**Usage:** `call_tool(tool_name: \"{}\")`\n",
+                        args.name
+                    ));
                 } else {
                     // Register script tool
                     let ext = match args.interpreter.as_deref() {
@@ -489,12 +571,15 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                         Some("bash") | Some("sh") => "sh",
                         _ => "script",
                     };
-                    
-                    let script_path = self.registry.scripts_dir().join(format!("{}.{}", args.name, ext));
+
+                    let script_path = self
+                        .registry
+                        .scripts_dir()
+                        .join(format!("{}.{}", args.name, ext));
                     if let Err(e) = std::fs::write(&script_path, &args.content) {
                         return format!("❌ Failed to save script: {}", e);
                     }
-                    
+
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
@@ -504,7 +589,7 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                             let _ = std::fs::set_permissions(&script_path, perms);
                         }
                     }
-                    
+
                     if let Err(e) = self.registry.register_tool(registry::ToolConfig {
                         name: args.name.clone(),
                         description: args.description.clone(),
@@ -516,18 +601,27 @@ Use skill_type: "wasm" for Rust tools, "script" for Python/Node/etc."#)]
                     }) {
                         return format!("❌ Failed to register: {}", e);
                     }
-                    
-                    output.push_str(&format!("🎉 **Skill `{}` created successfully!**\n\n", args.name));
-                    output.push_str(&format!("**Type:** 📜 Script ({})\n", args.interpreter.unwrap_or_else(|| "executable".to_string())));
+
+                    output.push_str(&format!(
+                        "🎉 **Skill `{}` created successfully!**\n\n",
+                        args.name
+                    ));
+                    output.push_str(&format!(
+                        "**Type:** 📜 Script ({})\n",
+                        args.interpreter.unwrap_or_else(|| "executable".to_string())
+                    ));
                     output.push_str(&format!("**Path:** {}\n", script_path.display()));
-                    output.push_str(&format!("**Usage:** `call_tool(tool_name: \"{}\")`\n", args.name));
+                    output.push_str(&format!(
+                        "**Usage:** `call_tool(tool_name: \"{}\")`\n",
+                        args.name
+                    ));
                 }
             }
             _ => {
                 output.push_str("❌ Invalid step. Use 1-4.\n");
             }
         }
-        
+
         output
     }
 }
@@ -551,14 +645,23 @@ impl ServerHandler for AppState {
         _ctx: RequestContext<RoleServer>,
     ) -> std::result::Result<ListResourcesResult, McpError> {
         let mut resources = vec![
-            RawResource::new("skillz://guide", "Skillz Guide - Complete usage guide".to_string())
-                .no_annotation(),
-            RawResource::new("skillz://examples", "Skillz Examples - Code snippets for WASM and Script tools".to_string())
-                .no_annotation(),
-            RawResource::new("skillz://protocol", "JSON-RPC 2.0 Protocol - How script tools communicate".to_string())
-                .no_annotation(),
+            RawResource::new(
+                "skillz://guide",
+                "Skillz Guide - Complete usage guide".to_string(),
+            )
+            .no_annotation(),
+            RawResource::new(
+                "skillz://examples",
+                "Skillz Examples - Code snippets for WASM and Script tools".to_string(),
+            )
+            .no_annotation(),
+            RawResource::new(
+                "skillz://protocol",
+                "JSON-RPC 2.0 Protocol - How script tools communicate".to_string(),
+            )
+            .no_annotation(),
         ];
-        
+
         // Add dynamic resources for each built tool
         for tool in self.registry.list_tools() {
             let type_emoji = match tool.tool_type {
@@ -570,10 +673,10 @@ impl ServerHandler for AppState {
                     format!("skillz://tools/{}", tool.name),
                     format!("{} {} - {}", type_emoji, tool.name, tool.description),
                 )
-                .no_annotation()
+                .no_annotation(),
             );
         }
-        
+
         Ok(ListResourcesResult {
             resources,
             next_cursor: None,
@@ -600,7 +703,7 @@ impl ServerHandler for AppState {
                 ));
             }
         };
-        
+
         Ok(ReadResourceResult {
             contents: vec![ResourceContents::text(content, uri)],
         })
@@ -610,10 +713,17 @@ impl ServerHandler for AppState {
 impl AppState {
     fn get_guide_content(&self) -> String {
         let tools = self.registry.list_tools();
-        let wasm_tools: Vec<_> = tools.iter().filter(|t| t.tool_type == ToolType::Wasm).collect();
-        let script_tools: Vec<_> = tools.iter().filter(|t| t.tool_type == ToolType::Script).collect();
-        
-        let mut guide = String::from(r##"# 🚀 Skillz Guide
+        let wasm_tools: Vec<_> = tools
+            .iter()
+            .filter(|t| t.tool_type == ToolType::Wasm)
+            .collect();
+        let script_tools: Vec<_> = tools
+            .iter()
+            .filter(|t| t.tool_type == ToolType::Script)
+            .collect();
+
+        let mut guide = String::from(
+            r##"# 🚀 Skillz Guide
 
 ## Overview
 Skillz is a self-extending MCP server that allows you to build and execute custom tools at runtime.
@@ -652,33 +762,44 @@ call_tool(tool_name: "my_tool", arguments: {...})
 
 ---
 
-"##);
+"##,
+        );
 
         // Add dynamic registered tools section
         if !wasm_tools.is_empty() || !script_tools.is_empty() {
             guide.push_str("## 📦 Registered Tools\n\n");
-            
+
             if !wasm_tools.is_empty() {
                 guide.push_str("### 🦀 WASM Tools\n\n");
                 for tool in &wasm_tools {
                     guide.push_str(&format!("- **{}** - {}\n", tool.name, tool.description));
-                    guide.push_str(&format!("  ```\n  call_tool(tool_name: \"{}\")\n  ```\n\n", tool.name));
+                    guide.push_str(&format!(
+                        "  ```\n  call_tool(tool_name: \"{}\")\n  ```\n\n",
+                        tool.name
+                    ));
                 }
             }
-            
+
             if !script_tools.is_empty() {
                 guide.push_str("### 📜 Script Tools\n\n");
                 for tool in &script_tools {
                     let interp = tool.interpreter.as_deref().unwrap_or("executable");
-                    guide.push_str(&format!("- **{}** [{}] - {}\n", tool.name, interp, tool.description));
-                    guide.push_str(&format!("  ```\n  call_tool(tool_name: \"{}\")\n  ```\n\n", tool.name));
+                    guide.push_str(&format!(
+                        "- **{}** [{}] - {}\n",
+                        tool.name, interp, tool.description
+                    ));
+                    guide.push_str(&format!(
+                        "  ```\n  call_tool(tool_name: \"{}\")\n  ```\n\n",
+                        tool.name
+                    ));
                 }
             }
-            
+
             guide.push_str("---\n\n");
         }
 
-        guide.push_str(r##"## Quick Start
+        guide.push_str(
+            r##"## Quick Start
 
 ### Creating a WASM Tool (Rust)
 1. Write Rust code with `fn main()`
@@ -704,7 +825,8 @@ call_tool(tool_name: "my_tool", arguments: {...})
 - `skillz://examples` - Code examples for WASM and Script tools
 - `skillz://protocol` - JSON-RPC 2.0 protocol documentation
 - `skillz://tools/{name}` - Individual tool documentation
-"##);
+"##,
+        );
 
         guide
     }
@@ -808,7 +930,8 @@ result = { message: "Hello from Ruby!", params: request["params"] }
 response = { jsonrpc: "2.0", result: result, id: request["id"] }
 puts response.to_json
 ```
-"##.to_string()
+"##
+        .to_string()
     }
 
     fn get_protocol_content(&self) -> String {
@@ -1049,10 +1172,22 @@ if __name__ == "__main__":
         match self.registry.get_tool(tool_name) {
             Some(tool) => {
                 let (type_name, type_emoji, path_info) = match tool.tool_type {
-                    ToolType::Wasm => ("WASM", "🦀", format!("WASM Path: {}", tool.wasm_path.display())),
+                    ToolType::Wasm => (
+                        "WASM",
+                        "🦀",
+                        format!("WASM Path: {}", tool.wasm_path.display()),
+                    ),
                     ToolType::Script => {
                         let interp = tool.interpreter.as_deref().unwrap_or("executable");
-                        ("Script", "📜", format!("Script Path: {}\nInterpreter: {}", tool.script_path.display(), interp))
+                        (
+                            "Script",
+                            "📜",
+                            format!(
+                                "Script Path: {}\nInterpreter: {}",
+                                tool.script_path.display(),
+                                interp
+                            ),
+                        )
                     }
                 };
                 format!(
@@ -1063,7 +1198,10 @@ if __name__ == "__main__":
                     tool.name
                 )
             }
-            None => format!("# ❌ Tool Not Found\n\nNo tool named '{}' exists.", tool_name),
+            None => format!(
+                "# ❌ Tool Not Found\n\nNo tool named '{}' exists.",
+                tool_name
+            ),
         }
     }
 }
@@ -1071,12 +1209,11 @@ if __name__ == "__main__":
 #[tokio::main]
 async fn main() -> Result<()> {
     // Get tools directory from env var or use ~/tools as default
-    let tools_dir = std::env::var("TOOLS_DIR")
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-            format!("{}/tools", home)
-        });
-    
+    let tools_dir = std::env::var("TOOLS_DIR").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        format!("{}/tools", home)
+    });
+
     let storage_dir = std::path::PathBuf::from(tools_dir);
     std::fs::create_dir_all(&storage_dir)?;
 
@@ -1084,11 +1221,11 @@ async fn main() -> Result<()> {
 
     let registry = registry::ToolRegistry::new(storage_dir);
     let runtime = runtime::ToolRuntime::new()?;
-    
+
     let state = AppState::new(registry, runtime);
 
     eprintln!("Skillz MCP started (WASM + Script tools)");
-    
+
     state.serve(stdio()).await?.waiting().await?;
 
     Ok(())

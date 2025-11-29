@@ -1,24 +1,19 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use anyhow::Result;
-use std::fs;
 
 /// Tool execution type
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolType {
     /// WebAssembly module compiled from Rust
+    #[default]
     Wasm,
     /// External script/executable with JSON-RPC 2.0 interface
     Script,
-}
-
-impl Default for ToolType {
-    fn default() -> Self {
-        ToolType::Wasm
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,16 +46,27 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     pub fn new(storage_dir: PathBuf) -> Self {
         let manifest_path = storage_dir.join("manifest.json");
-        
+
         // Load existing tools from manifest if it exists
         let tools = if manifest_path.exists() {
             match fs::read_to_string(&manifest_path) {
                 Ok(content) => {
                     match serde_json::from_str::<HashMap<String, ToolConfig>>(&content) {
                         Ok(loaded) => {
-                            let wasm_count = loaded.values().filter(|t| t.tool_type == ToolType::Wasm).count();
-                            let script_count = loaded.values().filter(|t| t.tool_type == ToolType::Script).count();
-                            eprintln!("Loaded {} tools ({} WASM, {} Script)", loaded.len(), wasm_count, script_count);
+                            let wasm_count = loaded
+                                .values()
+                                .filter(|t| t.tool_type == ToolType::Wasm)
+                                .count();
+                            let script_count = loaded
+                                .values()
+                                .filter(|t| t.tool_type == ToolType::Script)
+                                .count();
+                            eprintln!(
+                                "Loaded {} tools ({} WASM, {} Script)",
+                                loaded.len(),
+                                wasm_count,
+                                script_count
+                            );
                             Arc::new(RwLock::new(loaded))
                         }
                         Err(e) => {
@@ -77,15 +83,12 @@ impl ToolRegistry {
         } else {
             Arc::new(RwLock::new(HashMap::new()))
         };
-        
+
         // Create scripts directory
         let scripts_dir = storage_dir.join("scripts");
         let _ = fs::create_dir_all(&scripts_dir);
-        
-        Self {
-            tools,
-            storage_dir,
-        }
+
+        Self { tools, storage_dir }
     }
 
     fn save_manifest(&self) -> Result<()> {
@@ -111,11 +114,11 @@ impl ToolRegistry {
     pub fn list_tools(&self) -> Vec<ToolConfig> {
         self.tools.read().unwrap().values().cloned().collect()
     }
-    
+
     pub fn storage_dir(&self) -> &PathBuf {
         &self.storage_dir
     }
-    
+
     pub fn scripts_dir(&self) -> PathBuf {
         self.storage_dir.join("scripts")
     }

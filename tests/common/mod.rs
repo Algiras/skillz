@@ -1,8 +1,10 @@
 //! Common test utilities
 
+#![allow(dead_code)]
+
 use anyhow::Result;
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -11,7 +13,7 @@ pub fn compile_test_tool(name: &str, code: &str) -> Result<PathBuf> {
     let temp_dir = TempDir::new()?;
     let package_name = name.replace(' ', "_").to_lowercase();
     let project_path = temp_dir.path().join(&package_name);
-    
+
     // Find cargo
     let cargo = get_cargo_path();
 
@@ -23,7 +25,10 @@ pub fn compile_test_tool(name: &str, code: &str) -> Result<PathBuf> {
         .output()?;
 
     if !output.status.success() {
-        anyhow::bail!("Failed to create cargo project: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "Failed to create cargo project: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     // Write source
@@ -40,7 +45,10 @@ pub fn compile_test_tool(name: &str, code: &str) -> Result<PathBuf> {
         .output()?;
 
     if !output.status.success() {
-        anyhow::bail!("Cargo build failed: {}", String::from_utf8_lossy(&output.stderr));
+        anyhow::bail!(
+            "Cargo build failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let wasm_path = project_path
@@ -54,7 +62,7 @@ pub fn compile_test_tool(name: &str, code: &str) -> Result<PathBuf> {
     // Copy to persistent location
     let output_path = std::env::temp_dir().join(format!("skillz_test_{}.wasm", package_name));
     fs::copy(&wasm_path, &output_path)?;
-    
+
     Ok(output_path)
 }
 
@@ -73,4 +81,3 @@ fn get_cargo_path() -> String {
 pub fn create_test_tools_dir() -> TempDir {
     TempDir::new().expect("Failed to create temp dir")
 }
-

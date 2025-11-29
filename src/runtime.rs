@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::io::{Write, BufRead, BufReader};
 use wasmtime::{Engine, Linker, Module, Store};
 use wasmtime_wasi::preview1::{self, WasiP1Ctx};
-use wasmtime_wasi::{WasiCtxBuilder, pipe::MemoryOutputPipe};
+use wasmtime_wasi::{pipe::MemoryOutputPipe, WasiCtxBuilder};
 
 use crate::registry::{ToolConfig, ToolType};
 
@@ -61,10 +61,10 @@ impl Default for ExecutionContext {
         let cwd = std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| ".".to_string());
-        
+
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
         let tools_dir = std::env::var("TOOLS_DIR").unwrap_or_else(|_| format!("{}/tools", home));
-        
+
         // Safe environment variables to pass
         let mut env = std::collections::HashMap::new();
         for key in ["HOME", "USER", "LANG", "PATH", "TERM"] {
@@ -72,7 +72,7 @@ impl Default for ExecutionContext {
                 env.insert(key.to_string(), val);
             }
         }
-        
+
         Self {
             roots: vec![cwd.clone()],
             working_directory: cwd,
@@ -83,7 +83,6 @@ impl Default for ExecutionContext {
         }
     }
 }
-
 
 /// JSON-RPC 2.0 Response from scripts
 #[derive(Debug, Deserialize)]
@@ -150,7 +149,7 @@ pub struct ToolRuntime {
 impl ToolRuntime {
     pub fn new() -> Result<Self> {
         let engine = Engine::default();
-        Ok(Self { 
+        Ok(Self {
             engine,
             context: ExecutionContext::default(),
         })
@@ -189,12 +188,12 @@ impl ToolRuntime {
 
         let mut store = Store::new(&self.engine, wasi);
         let module = Module::from_file(&self.engine, wasm_path)?;
-        
+
         linker.module(&mut store, "", &module)?;
-        
+
         let instance = linker.instantiate(&mut store, &module)?;
         let start = instance.get_typed_func::<(), ()>(&mut store, "_start")?;
-        
+
         start.call(&mut store, ())?;
 
         let output = stdout.contents();
@@ -208,7 +207,7 @@ impl ToolRuntime {
         // Build execution context
         let mut context = self.context.clone();
         context.tool_name = config.name.clone();
-        
+
         // Build the JSON-RPC request with context
         let request = JsonRpcRequest {
             jsonrpc: "2.0",
@@ -219,10 +218,10 @@ impl ToolRuntime {
             },
             id: 1,
         };
-        
+
         let request_json = serde_json::to_string(&request)?;
         eprintln!("Script request: {}", request_json);
-        
+
         // Determine how to run the script
         let mut cmd = if let Some(ref interpreter) = config.interpreter {
             let mut c = Command::new(interpreter);
@@ -231,7 +230,7 @@ impl ToolRuntime {
         } else {
             Command::new(&config.script_path)
         };
-        
+
         // Set up the process
         let mut child = cmd
             .stdin(Stdio::piped())
@@ -239,35 +238,34 @@ impl ToolRuntime {
             .stderr(Stdio::piped())
             .spawn()
             .context(format!("Failed to spawn script: {:?}", config.script_path))?;
-        
+
         // Write request to stdin and close it
         {
-            let stdin = child.stdin.as_mut()
-                .context("Failed to get stdin")?;
+            let stdin = child.stdin.as_mut().context("Failed to get stdin")?;
             stdin.write_all(request_json.as_bytes())?;
             stdin.write_all(b"\n")?;
             stdin.flush()?;
         }
         // stdin is closed here when it goes out of scope
-        
+
         // Collect logs and result
         let mut logs = Vec::new();
         let mut progress = Vec::new();
         let mut final_result: Option<Value> = None;
         let mut final_error: Option<String> = None;
-        
+
         // Read stdout line by line
         let stdout = child.stdout.take().context("Failed to get stdout")?;
         let reader = BufReader::new(stdout);
-        
+
         for line in reader.lines() {
             let line = line?;
             if line.trim().is_empty() {
                 continue;
             }
-            
+
             eprintln!("Script output line: {}", line);
-            
+
             // Try to parse as JSON-RPC
             if let Ok(response) = serde_json::from_str::<JsonRpcResponse>(&line) {
                 // Check if it's a notification (method present, no id)
@@ -285,7 +283,10 @@ impl ToolRuntime {
                             if let Some(params) = response.params {
                                 if let Ok(prog) = serde_json::from_value::<ProgressUpdate>(params) {
                                     if let Some(ref msg) = prog.message {
-                                        eprintln!("[PROGRESS] {}/{} - {}", prog.current, prog.total, msg);
+                                        eprintln!(
+                                            "[PROGRESS] {}/{} - {}",
+                                            prog.current, prog.total, msg
+                                        );
                                     }
                                     progress.push(prog);
                                 }
@@ -313,10 +314,10 @@ impl ToolRuntime {
                 }
             }
         }
-        
+
         // Wait for the process to finish
         let status = child.wait()?;
-        
+
         // Check stderr for any errors
         if let Some(mut stderr) = child.stderr.take() {
             let mut stderr_content = String::new();
@@ -331,7 +332,7 @@ impl ToolRuntime {
                 });
             }
         }
-        
+
         // Determine final output
         let output = if let Some(err) = final_error {
             Value::String(err)
@@ -342,7 +343,11 @@ impl ToolRuntime {
         } else {
             Value::String("Script completed with no output".to_string())
         };
-        
-        Ok(ScriptResult { output, logs, progress })
+
+        Ok(ScriptResult {
+            output,
+            logs,
+            progress,
+        })
     }
 }

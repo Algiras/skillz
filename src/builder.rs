@@ -70,10 +70,10 @@ impl Builder {
         // For now, we return the path inside the temp dir, but we must ensure
         // the temp dir persists or we copy it here.
         // Let's copy to a temp file that persists.
-        
+
         let output_path = std::env::temp_dir().join(format!("{}.wasm", package_name));
         fs::copy(&wasm_path, &output_path)?;
-        
+
         Ok(output_path)
     }
 }

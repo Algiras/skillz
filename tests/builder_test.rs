@@ -1,7 +1,6 @@
 //! Tests for the WASM builder module
 
 use std::fs;
-use std::path::PathBuf;
 
 mod common;
 
@@ -15,11 +14,15 @@ fn main() {
 "#;
 
     let result = common::compile_test_tool("test_simple", code);
-    assert!(result.is_ok(), "Compilation should succeed: {:?}", result.err());
-    
+    assert!(
+        result.is_ok(),
+        "Compilation should succeed: {:?}",
+        result.err()
+    );
+
     let wasm_path = result.unwrap();
     assert!(wasm_path.exists(), "WASM file should exist");
-    
+
     // Clean up
     let _ = fs::remove_file(wasm_path);
 }
@@ -51,8 +54,12 @@ fn main() {
 "#;
 
     let result = common::compile_test_tool("test_std", code);
-    assert!(result.is_ok(), "Compilation with std should succeed: {:?}", result.err());
-    
+    assert!(
+        result.is_ok(),
+        "Compilation with std should succeed: {:?}",
+        result.err()
+    );
+
     if let Ok(path) = result {
         let _ = fs::remove_file(path);
     }
@@ -82,14 +89,17 @@ fn main() {
 
     let result = common::compile_test_tool("test_binary", code);
     assert!(result.is_ok());
-    
+
     let wasm_path = result.unwrap();
     let bytes = fs::read(&wasm_path).expect("Should read WASM file");
-    
+
     // WASM magic number: 0x00 0x61 0x73 0x6D (\0asm)
     assert!(bytes.len() >= 4, "WASM file should have at least 4 bytes");
-    assert_eq!(&bytes[0..4], &[0x00, 0x61, 0x73, 0x6D], "Should have WASM magic number");
-    
+    assert_eq!(
+        &bytes[0..4],
+        &[0x00, 0x61, 0x73, 0x6D],
+        "Should have WASM magic number"
+    );
+
     let _ = fs::remove_file(wasm_path);
 }
-
