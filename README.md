@@ -151,7 +151,9 @@ Add to `~/.cursor/mcp.json`:
 
 ### Zero-Install Mode (Run on Demand)
 
-You can run Skillz without installing it, sim<div align="center">
+You can run Skillz without installing it, similar to `npx`.
+
+<div align="center">
 
 <a href="cursor://anysphere.cursor-deeplink/mcp/install?name=skillz&config=eyJ0eXBlIjogInN0ZGlvIiwgImNvbW1hbmQiOiAic2giLCAiYXJncyI6IFsiLWMiLCAiY3VybCAtZnNTTCBodHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vQWxnaXJhcy9za2lsbHovbWFzdGVyL2luc3RhbGwuc2ggfCBzaCAtcyAtLSBsYXRlc3QgcnVuIl19">
   <img src="https://cursor.com/deeplink/mcp-install-dark.png" alt="Add to Cursor" height="40" />
@@ -163,7 +165,16 @@ You can run Skillz without installing it, sim<div align="center">
 [![Crates.io](https://img.shields.io/crates/v/skillz.svg)](https://crates.io/crates/skillz)
 [![Downloads](https://img.shields.io/crates/d/skillz.svg)](https://crates.io/crates/skillz)
 
-</div>master/install.sh | sh -s -- latest run"]
+</div>
+
+Or manually configure:
+
+```json
+{
+  "mcpServers": {
+    "skillz": {
+      "command": "sh",
+      "args": ["-c", "curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh -s -- latest run"]
     }
   }
 }
@@ -388,6 +399,7 @@ MIT License - see [LICENSE](LICENSE)
 | 📖 **Documentation** | [algiras.github.io/skillz](https://algiras.github.io/skillz) |
 | 💻 **GitHub** | [github.com/Algiras/skillz](https://github.com/Algiras/skillz) |
 | 📋 **MCP Spec** | [modelcontextprotocol.io](https://modelcontextprotocol.io) |
+| 👔 **LinkedIn** | [linkedin.com/in/asimplek](https://www.linkedin.com/in/asimplek/) |
 
 ---
 
