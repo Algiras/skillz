@@ -77,11 +77,14 @@ No deployments. No restarts. Just ask.
 </div>
 
 ```bash
+# 🚀 One-line install (Linux & macOS)
+curl -fsSL https://raw.githubusercontent.com/Algiras/skillz/master/install.sh | sh
+
+# Or install from crates.io
+cargo install skillz
+
 # Install WASM target (required for building tools)
 rustup target add wasm32-wasip1
-
-# Install Skillz from crates.io
-cargo install skillz
 ```
 
 **Or build from source:**
