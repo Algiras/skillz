@@ -499,6 +499,26 @@
             color: #d19a66;
         }
 
+        .json-key {
+            color: #61afef;
+        }
+
+        .json-string {
+            color: #98c379;
+        }
+
+        .json-number {
+            color: #d19a66;
+        }
+
+        .json-boolean {
+            color: #c678dd;
+        }
+
+        .json-null {
+            color: #c678dd;
+        }
+
         /* Architecture */
         .architecture {
             padding: 6rem 0;
@@ -1541,6 +1561,41 @@ for i in range(3):
 
         // Initialize copy buttons after DOM is ready
         document.addEventListener('DOMContentLoaded', addCopyButtons);
+
+        // JSON syntax highlighting helper
+        function highlightJSON(json) {
+            return json
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                    let cls = 'json-number';
+                    if (/^"/.test(match)) {
+                        if (/:$/.test(match)) {
+                            cls = 'json-key';
+                        } else {
+                            cls = 'json-string';
+                        }
+                    } else if (/true|false/.test(match)) {
+                        cls = 'json-boolean';
+                    } else if (/null/.test(match)) {
+                        cls = 'json-null';
+                    }
+                    return '<span class="' + cls + '">' + match + '</span>';
+                });
+        }
+
+        // Apply JSON highlighting to MCP config on load
+        document.addEventListener('DOMContentLoaded', function () {
+            const codeBlocks = document.querySelectorAll('code');
+            codeBlocks.forEach(block => {
+                const text = block.textContent;
+                // Simple check if content looks like JSON
+                if (text.trim().startsWith('{') && text.includes('"mcpServers"')) {
+                    block.innerHTML = highlightJSON(text);
+                }
+            });
+        });
     </script>
 </body>
 
