@@ -32,6 +32,16 @@ cargo install skillz
 
 ---
 
+## ☕ Support Skillz
+
+If you find Skillz useful, please consider supporting its development:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/algiras)
+
+Your support enables new features and improvements!
+
+---
+
 ## 🔧 Editor Configuration
 
 ### Cursor IDE
@@ -85,6 +95,7 @@ Add to `~/.cursor/mcp.json`:
 | 🔒 **Sandbox** | Optional bubblewrap/firejail/nsjail isolation |
 | 📂 **Shareable** | Each tool has its own directory with manifest.json |
 | 📖 **Dynamic Guide** | Built-in `skillz://guide` resource updates automatically |
+| 🌐 **Tool Import** | Import tools from GitHub repos or Gists |
 
 ---
 
@@ -95,6 +106,7 @@ Add to `~/.cursor/mcp.json`:
 | `build_tool` | Compile Rust code → WASM tool |
 | `register_script` | Register script with optional deps & annotations |
 | `create_skill` | Step-by-step guided creation |
+| `import_tool` | Import tools from git repos or GitHub gists |
 | `call_tool` | Execute any registered tool |
 | `list_tools` | List all available tools |
 | `complete` | Get autocomplete suggestions for arguments |
@@ -178,6 +190,30 @@ register_script(
   interpreter: "python3",
   dependencies: ["pandas", "numpy"],
   code: "..."
+)
+```
+
+### Import Tools from GitHub
+
+```
+# Import from a git repository
+import_tool(
+  source: "https://github.com/user/skillz-json-tools"
+)
+
+# Import from a specific branch
+import_tool(
+  source: "https://github.com/user/repo#main"
+)
+
+# Import from a GitHub Gist
+import_tool(
+  source: "gist:abc123def456"
+)
+
+# Or with full gist URL
+import_tool(
+  source: "https://gist.github.com/user/abc123def456"
 )
 ```
 
