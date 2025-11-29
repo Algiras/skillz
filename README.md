@@ -9,13 +9,126 @@
 
 **Build and execute custom tools at runtime. Let your AI create its own tools.**
 
-[Getting Started](#-getting-started) •
+[Quick Install](#-quick-install) •
 [Features](#-features) •
 [Documentation](#-documentation) •
 [Examples](#-examples) •
 [Contributing](#-contributing)
 
 </div>
+
+---
+
+## ⚡ Quick Install
+
+### One-Click Install for Editors
+
+<table>
+<tr>
+<td align="center" width="33%">
+
+### 🖥️ Cursor
+
+[![Install in Cursor](https://img.shields.io/badge/Install-Cursor-blue?style=for-the-badge&logo=cursor)](cursor://settings/mcp)
+
+</td>
+<td align="center" width="33%">
+
+### 🤖 Claude Desktop
+
+[![Install in Claude](https://img.shields.io/badge/Install-Claude_Desktop-orange?style=for-the-badge&logo=anthropic)](https://claude.ai/download)
+
+</td>
+<td align="center" width="33%">
+
+### 💻 VS Code
+
+[![Install in VS Code](https://img.shields.io/badge/Install-VS_Code-007ACC?style=for-the-badge&logo=visualstudiocode)](vscode:extension/anthropic.claude-mcp)
+
+</td>
+</tr>
+</table>
+
+### Install from Source
+
+```bash
+# 1. Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 2. Add WASM target
+rustup target add wasm32-wasip1
+
+# 3. Clone and build
+git clone https://github.com/Algiras/skillz.git
+cd skillz
+cargo build --release
+
+# 4. The binary is at: ./target/release/skillz
+```
+
+---
+
+## 🔧 Editor Configuration
+
+### Cursor IDE
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "skillz": {
+      "command": "/absolute/path/to/skillz",
+      "args": [],
+      "env": {
+        "TOOLS_DIR": "~/skillz-tools",
+        "PATH": "/usr/local/bin:/usr/bin:/bin:~/.cargo/bin"
+      }
+    }
+  }
+}
+```
+
+Then restart Cursor or run `Developer: Reload Window`.
+
+### Claude Desktop
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "skillz": {
+      "command": "/absolute/path/to/skillz",
+      "env": {
+        "TOOLS_DIR": "~/skillz-tools"
+      }
+    }
+  }
+}
+```
+
+### VS Code (with Continue or similar)
+
+Add to your MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "skillz": {
+      "command": "/absolute/path/to/skillz",
+      "env": {
+        "TOOLS_DIR": "~/skillz-tools"
+      }
+    }
+  }
+}
+```
+
+### Windsurf / Zed / Other MCP Clients
+
+Most MCP clients use the same JSON configuration format. Add `skillz` to your MCP servers configuration with the command pointing to the built binary.
 
 ---
 
@@ -26,7 +139,7 @@ Skillz is a **Model Context Protocol (MCP) server** that allows AI assistants to
 - 🦀 **Build WASM tools** from Rust code on-the-fly
 - 📜 **Register script tools** in any language (Python, Node.js, Ruby, Bash, etc.)
 - 🔄 **Execute tools** with full JSON-RPC 2.0 protocol support
-- 🧠 **Think step-by-step** with sequential thinking capabilities
+- 🔧 **Create skills step-by-step** with guided workflow
 - 🔒 **Run safely** in a WebAssembly sandbox
 
 ```
@@ -37,8 +150,8 @@ Skillz is a **Model Context Protocol (MCP) server** that allows AI assistants to
 ┌───────────────────────────▼─────────────────────────────────┐
 │                     Skillz MCP Server                        │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────┐ │
-│  │   WASM Tools    │  │  Script Tools   │  │  Thinking    │ │
-│  │  (Rust → WASM)  │  │ (Any Language)  │  │  Framework   │ │
+│  │   WASM Tools    │  │  Script Tools   │  │  Sequential  │ │
+│  │  (Rust → WASM)  │  │ (Any Language)  │  │   Creation   │ │
 │  └─────────────────┘  └─────────────────┘  └──────────────┘ │
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │              Tool Registry & Runtime                    ││
@@ -71,75 +184,16 @@ result = {"message": "Hello from Python!"}
 print(json.dumps({"jsonrpc": "2.0", "result": result, "id": request["id"]}))
 ```
 
-### 🧠 Sequential Thinking
-Built-in support for step-by-step reasoning with revision and branching capabilities.
+### 🔧 Sequential Skill Creation
+Build tools step-by-step with guided workflow: **Design → Implement → Test → Finalize**
 
 ### 🔌 Full MCP Protocol
-- **Resources**: Dynamic documentation and tool info
+- **Resources**: Dynamic documentation and tool info (updates when tools are added!)
 - **Roots**: Workspace directory access for scripts
 - **Logging**: Real-time log streaming
 - **Progress**: Progress reporting for long operations
 - **Elicitation**: Request user input (when supported)
 - **Sampling**: Request LLM completions (when supported)
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- **Rust 1.70+** with `wasm32-wasip1` target
-- **Cargo** package manager
-
-### Installation
-
-```bash
-# Install WASM target
-rustup target add wasm32-wasip1
-
-# Clone the repository
-git clone https://github.com/Algiras/skillz.git
-cd skillz
-
-# Build release
-cargo build --release
-```
-
-### Configure with Cursor IDE
-
-Add to your `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "skillz": {
-      "command": "/path/to/skillz/mcp-wasm-host/target/release/mcp-wasm-host",
-      "args": [],
-      "env": {
-        "TOOLS_DIR": "/path/to/tools",
-        "PATH": "/usr/local/bin:/usr/bin:/bin:~/.cargo/bin"
-      }
-    }
-  }
-}
-```
-
-### Configure with Claude Desktop
-
-Add to your Claude Desktop config:
-
-```json
-{
-  "mcpServers": {
-    "skillz": {
-      "command": "/path/to/mcp-wasm-host",
-      "env": {
-        "TOOLS_DIR": "~/tools"
-      }
-    }
-  }
-}
-```
 
 ---
 
@@ -151,6 +205,7 @@ Add to your Claude Desktop config:
 |------|-------------|
 | `build_tool` | Compile Rust code → WASM tool |
 | `register_script` | Register any-language script tool |
+| `create_skill` | Step-by-step skill creation workflow |
 | `call_tool` | Execute a registered tool |
 | `list_tools` | List all available tools |
 | `test_validate` | Validate Rust code before building |
@@ -161,7 +216,7 @@ Add to your Claude Desktop config:
 
 | URI | Description |
 |-----|-------------|
-| `skillz://guide` | Complete usage guide |
+| `skillz://guide` | Complete usage guide (auto-updates with new tools!) |
 | `skillz://examples` | Code examples for all languages |
 | `skillz://protocol` | JSON-RPC 2.0 protocol documentation |
 | `skillz://tools/{name}` | Individual tool documentation |
@@ -222,6 +277,15 @@ register_script(
 )
 ```
 
+### Step-by-Step Skill Creation
+
+```
+create_skill(name: "calculator", description: "Math calculator", step: 1, content: "Design notes...", skill_type: "wasm")
+create_skill(name: "calculator", description: "Math calculator", step: 2, content: "fn main() {...}", skill_type: "wasm")
+create_skill(name: "calculator", description: "Math calculator", step: 3, content: "fn main() {...}", skill_type: "wasm")
+create_skill(name: "calculator", description: "Math calculator", step: 4, content: "fn main() {...}", skill_type: "wasm")
+```
+
 ### Execute a Tool
 
 ```
@@ -234,13 +298,13 @@ call_tool(tool_name: "word_count", arguments: {"text": "Hello world!"})
 ## 🏗️ Architecture
 
 ```
-mcp-wasm-host/
+skillz/
 ├── src/
 │   ├── main.rs       # MCP server, tools, resources
 │   ├── builder.rs    # Rust → WASM compilation
 │   ├── runtime.rs    # WASM & Script execution
 │   └── registry.rs   # Tool storage & management
-├── tools/            # Compiled WASM & scripts
+├── tests/            # Rust integration tests
 ├── docs/             # GitHub Pages documentation
 └── .github/          # CI/CD workflows
 ```
@@ -279,23 +343,20 @@ cargo build
 cargo build --release
 
 # Run tests
-python3 test_e2e.py
+cargo test
 ```
 
 ### Testing
 
 ```bash
-# Full end-to-end test
-python3 test_e2e.py
+# Run all tests
+cargo test
 
-# Validation tests
-python3 test_validate.py
+# Run specific test
+cargo test test_mcp_initialization
 
-# Persistence tests
-python3 test_persistence.py
-
-# Workflow tests
-python3 test_workflow.py
+# Run with output
+cargo test -- --nocapture
 ```
 
 ---
