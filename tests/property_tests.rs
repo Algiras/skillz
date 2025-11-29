@@ -90,6 +90,10 @@ impl PathSpec {
         let is_absolute = path.starts_with('/');
         Self { path, is_absolute }
     }
+
+    fn path(&self) -> &str {
+        &self.path
+    }
 }
 
 proptest! {
@@ -98,6 +102,7 @@ proptest! {
     fn test_absolute_path_detection(path in "/[a-z]+(/[a-z]+)*") {
         let spec = PathSpec::new(path);
         prop_assert!(spec.is_absolute);
+        prop_assert!(spec.path().starts_with('/'));
     }
 
     /// Property: Relative paths should not start with /
@@ -105,6 +110,7 @@ proptest! {
     fn test_relative_path_detection(path in "[a-z]+(/[a-z]+)*") {
         let spec = PathSpec::new(path);
         prop_assert!(!spec.is_absolute);
+        prop_assert!(!spec.path().starts_with('/'));
     }
 }
 
@@ -246,6 +252,6 @@ proptest! {
     /// Property: Time limits should be reasonable
     #[test]
     fn test_time_limit_range(limit in 1u64..3600) {
-        prop_assert!(limit >= 1 && limit <= 3600);
+        prop_assert!((1..=3600).contains(&limit));
     }
 }

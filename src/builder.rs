@@ -14,6 +14,7 @@ pub struct WasmDependency {
 }
 
 impl WasmDependency {
+    #[allow(dead_code)]
     pub fn new(name: &str, version: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -22,6 +23,7 @@ impl WasmDependency {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_features(mut self, features: Vec<String>) -> Self {
         self.features = features;
         self

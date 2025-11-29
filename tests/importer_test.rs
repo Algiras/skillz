@@ -14,7 +14,7 @@ mod gist_parsing {
     fn test_gist_id_from_url() {
         // Format: https://gist.github.com/user/ID
         let url = "https://gist.github.com/algiras/eaeebc3ae8e234ba7c1e46a76619f0fd";
-        let id = url.split('/').last().unwrap();
+        let id = url.split('/').next_back().unwrap();
         assert_eq!(id, "eaeebc3ae8e234ba7c1e46a76619f0fd");
     }
 
@@ -82,14 +82,14 @@ mod git_parsing {
     #[test]
     fn test_extract_repo_name() {
         let url = "https://github.com/user/my-tool-repo";
-        let name = url.trim_end_matches(".git").split('/').last().unwrap();
+        let name = url.trim_end_matches(".git").split('/').next_back().unwrap();
         assert_eq!(name, "my-tool-repo");
     }
 
     #[test]
     fn test_extract_repo_name_with_git_suffix() {
         let url = "https://github.com/user/my-tool-repo.git";
-        let name = url.trim_end_matches(".git").split('/').last().unwrap();
+        let name = url.trim_end_matches(".git").split('/').next_back().unwrap();
         assert_eq!(name, "my-tool-repo");
     }
 }

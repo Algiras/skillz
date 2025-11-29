@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 /// Tool execution type
@@ -240,15 +240,18 @@ impl ToolConfig {
     pub fn dependencies(&self) -> &[String] {
         &self.manifest.dependencies
     }
+    #[allow(dead_code)]
     pub fn wasm_dependencies(&self) -> &[String] {
         &self.manifest.wasm_dependencies
     }
     pub fn input_schema(&self) -> &ToolSchema {
         &self.manifest.input_schema
     }
+    #[allow(dead_code)]
     pub fn output_schema(&self) -> Option<&ToolSchema> {
         self.manifest.output_schema.as_ref()
     }
+    #[allow(dead_code)]
     pub fn annotations(&self) -> Option<&ToolAnnotations> {
         self.manifest.annotations.as_ref()
     }
@@ -336,7 +339,7 @@ impl ToolRegistry {
     }
 
     /// Load a single tool from its directory
-    fn load_tool_from_dir(&self, tool_dir: &PathBuf) -> Result<ToolConfig> {
+    fn load_tool_from_dir(&self, tool_dir: &Path) -> Result<ToolConfig> {
         let manifest_path = tool_dir.join("manifest.json");
         let content = fs::read_to_string(&manifest_path)?;
         let manifest: ToolManifest = serde_json::from_str(&content)?;
@@ -380,7 +383,7 @@ impl ToolRegistry {
 
         Ok(ToolConfig {
             manifest,
-            tool_dir: tool_dir.clone(),
+            tool_dir: tool_dir.to_path_buf(),
             wasm_path,
             script_path,
             env_path: if env_exists { Some(env_path) } else { None },
@@ -408,6 +411,7 @@ impl ToolRegistry {
         // Old format structure
         #[derive(Deserialize)]
         struct OldToolConfig {
+            #[allow(dead_code)]
             name: String,
             description: String,
             #[serde(default)]
@@ -663,6 +667,7 @@ impl ToolRegistry {
     }
 
     /// Get tool directory for a specific tool
+    #[allow(dead_code)]
     pub fn tool_dir(&self, name: &str) -> PathBuf {
         self.storage_dir.join(name)
     }
@@ -684,6 +689,7 @@ impl ToolRegistry {
     }
 
     /// Update the manifest for an existing tool
+    #[allow(dead_code)]
     pub fn update_manifest(&self, name: &str, manifest: ToolManifest) -> Result<()> {
         let tool_dir = self.storage_dir.join(name);
         let manifest_path = tool_dir.join("manifest.json");

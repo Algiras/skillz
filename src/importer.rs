@@ -33,7 +33,7 @@ impl ImportSource {
             // Extract gist ID from URL
             let id = source
                 .split('/')
-                .last()
+                .next_back()
                 .unwrap_or("")
                 .split('.')
                 .next()

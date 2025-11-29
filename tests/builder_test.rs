@@ -112,7 +112,7 @@ mod wasm_deps {
     fn test_parse_dependency_name_only() {
         // This test uses the internal builder module tests
         // The actual parsing is tested in builder.rs unit tests
-        let deps = vec!["serde".to_string()];
+        let deps = ["serde".to_string()];
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0], "serde");
     }
@@ -120,7 +120,7 @@ mod wasm_deps {
     /// Test parsing dependency with version
     #[test]
     fn test_parse_dependency_with_version() {
-        let deps = vec!["serde@1.0".to_string()];
+        let deps = ["serde@1.0".to_string()];
         assert_eq!(deps.len(), 1);
         assert!(deps[0].contains('@'));
     }
@@ -128,7 +128,7 @@ mod wasm_deps {
     /// Test parsing dependency with features
     #[test]
     fn test_parse_dependency_with_features() {
-        let deps = vec!["serde@1.0[derive,json]".to_string()];
+        let deps = ["serde@1.0[derive,json]".to_string()];
         assert_eq!(deps.len(), 1);
         assert!(deps[0].contains('['));
         assert!(deps[0].contains("derive"));
@@ -137,7 +137,7 @@ mod wasm_deps {
     /// Test multiple dependencies
     #[test]
     fn test_multiple_dependencies() {
-        let deps = vec![
+        let deps = [
             "serde@1.0[derive]".to_string(),
             "regex@1.10".to_string(),
             "anyhow".to_string(),

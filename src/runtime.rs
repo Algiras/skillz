@@ -58,6 +58,7 @@ impl Default for SandboxConfig {
 
 impl SandboxConfig {
     /// Check if the required sandbox tool is available
+    #[allow(dead_code)]
     pub fn check_available(&self) -> Result<bool> {
         match self.mode {
             SandboxMode::None => Ok(true),
@@ -336,6 +337,7 @@ impl Default for ExecutionContext {
 
 impl ExecutionContext {
     /// Update roots from MCP client (takes priority over env/defaults)
+    #[allow(dead_code)]
     pub fn with_roots(mut self, roots: Vec<String>) -> Self {
         if !roots.is_empty() {
             self.roots = roots;
@@ -344,6 +346,7 @@ impl ExecutionContext {
     }
 
     /// Update capabilities from MCP client
+    #[allow(dead_code)]
     pub fn with_capabilities(mut self, capabilities: ClientCapabilities) -> Self {
         self.capabilities = capabilities;
         self
@@ -439,6 +442,7 @@ impl ToolRuntime {
     }
 
     /// Create runtime with custom sandbox configuration
+    #[allow(dead_code)]
     pub fn with_sandbox(sandbox_config: SandboxConfig) -> Result<Self> {
         let engine = Engine::default();
         Ok(Self {
@@ -449,11 +453,13 @@ impl ToolRuntime {
     }
 
     /// Get current sandbox configuration
+    #[allow(dead_code)]
     pub fn sandbox_config(&self) -> &SandboxConfig {
         &self.sandbox_config
     }
 
     /// Check if sandbox is available
+    #[allow(dead_code)]
     pub fn sandbox_available(&self) -> bool {
         self.sandbox_config.check_available().unwrap_or(false)
     }
@@ -736,6 +742,7 @@ impl ToolRuntime {
 pub struct InstallResult {
     pub success: bool,
     pub message: String,
+    #[allow(dead_code)]
     pub env_path: Option<std::path::PathBuf>,
 }
 
