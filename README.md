@@ -102,8 +102,7 @@ Your support enables new features and improvements!
 
 ### Cursor IDE
 
-**1.** Install: `cargo install skillz`  
-**2.** [![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.png)](https://algiras.github.io/skillz/install-cursor.html)
+[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.png)](https://algiras.github.io/skillz/install-cursor.html)
 
 Or add manually to `~/.cursor/mcp.json`:
 
