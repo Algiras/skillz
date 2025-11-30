@@ -2,7 +2,7 @@
 
 # 🚀 Skillz - Self-Extending MCP Server
 
-<img src="docs/architecture.png" alt="Skillz Architecture" width="100%">
+<img src="docs/architecture-flow.png" alt="Skillz Architecture & Feature Flows" width="100%">
 
 [![Crates.io](https://img.shields.io/crates/v/skillz.svg)](https://crates.io/crates/skillz)
 [![CI](https://github.com/Algiras/skillz/actions/workflows/ci.yml/badge.svg)](https://github.com/Algiras/skillz/actions/workflows/ci.yml)

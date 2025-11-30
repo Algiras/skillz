@@ -28,8 +28,8 @@ tempfile = "3.8"
 rmcp = { version = "0.9.1", features = ["transport-io", "transport-sse-server", "elicitation"] }
 clap = { version = "4.4", features = ["derive"] }
 tokio-util = "0.7"
-# Using libsql with minimal features to reduce compile size
-libsql = { version = "0.6", default-features = false, features = ["core"] }
+# Using rusqlite with bundled SQLite for cross-platform compatibility (Windows, macOS, Linux)
+rusqlite = { version = "0.32", features = ["bundled"] }
 rmcp-macros = "0.9.1"
 # File system watching for hot reload
 notify = "6.1"

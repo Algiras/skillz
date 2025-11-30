@@ -1,14 +1,14 @@
-//! Memory storage for AI tools using libSQL
+//! Memory storage for AI tools using rusqlite
 //!
 //! Provides persistent memory for tools to store state between calls.
-//! Future: Add vector embeddings for semantic search.
+//! Uses rusqlite with bundled SQLite for cross-platform compatibility.
 
 use anyhow::{Context, Result};
-use libsql::{Builder, Connection};
+use rusqlite::{params, Connection};
 use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 
 /// Current schema version - increment when making breaking changes
 const SCHEMA_VERSION: i32 = 2;
@@ -16,7 +16,7 @@ const SCHEMA_VERSION: i32 = 2;
 /// Memory store for tool state persistence
 #[derive(Clone)]
 pub struct Memory {
-    conn: Arc<RwLock<Connection>>,
+    conn: Arc<Mutex<Connection>>,
 }
 
 impl Memory {
@@ -29,15 +29,14 @@ impl Memory {
             std::fs::create_dir_all(parent)?;
         }
 
-        let db = Builder::new_local(&db_path)
-            .build()
-            .await
+        let conn = Connection::open(&db_path)
             .with_context(|| format!("Failed to open memory database at {:?}", db_path))?;
 
-        let conn = db.connect()?;
+        // Enable WAL mode for better concurrency
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
 
         let store = Self {
-            conn: Arc::new(RwLock::new(conn)),
+            conn: Arc::new(Mutex::new(conn)),
         };
 
         // Run migrations
@@ -48,7 +47,7 @@ impl Memory {
 
     /// Run database migrations
     async fn migrate(&self) -> Result<()> {
-        let conn = self.conn.write().await;
+        let conn = self.conn.lock().await;
 
         // Create migrations table if not exists
         conn.execute(
@@ -56,35 +55,32 @@ impl Memory {
                 version INTEGER PRIMARY KEY,
                 applied_at TEXT NOT NULL DEFAULT (datetime('now'))
             )",
-            (),
-        )
-        .await?;
+            [],
+        )?;
 
         // Get current version
-        let mut rows = conn
-            .query("SELECT COALESCE(MAX(version), 0) FROM _migrations", ())
-            .await?;
-
-        let current_version: i32 = if let Some(row) = rows.next().await? {
-            row.get::<i32>(0)?
-        } else {
-            0
-        };
+        let current_version: i32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM _migrations",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         // Apply migrations
         if current_version < 1 {
-            self.migrate_v1(&conn).await?;
+            Self::migrate_v1(&conn)?;
         }
 
         if current_version < 2 {
-            self.migrate_v2(&conn).await?;
+            Self::migrate_v2(&conn)?;
         }
 
         Ok(())
     }
 
     /// Migration v1: Initial schema
-    async fn migrate_v1(&self, conn: &Connection) -> Result<()> {
+    fn migrate_v1(conn: &Connection) -> Result<()> {
         eprintln!("Running memory migration v1...");
 
         // Main memory table
@@ -98,52 +94,45 @@ impl Memory {
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(tool, key)
             )",
-            (),
-        )
-        .await?;
+            [],
+        )?;
 
         // Indexes for fast lookups
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_memories_tool ON memories(tool)",
-            (),
-        )
-        .await?;
+            [],
+        )?;
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_memories_tool_key ON memories(tool, key)",
-            (),
-        )
-        .await?;
+            [],
+        )?;
 
         // Record migration
-        conn.execute("INSERT INTO _migrations (version) VALUES (1)", ())
-            .await?;
+        conn.execute("INSERT INTO _migrations (version) VALUES (1)", [])?;
 
         eprintln!("Memory migration v1 complete");
         Ok(())
     }
 
     /// Migration v2: Add TTL/expiration support
-    async fn migrate_v2(&self, conn: &Connection) -> Result<()> {
+    fn migrate_v2(conn: &Connection) -> Result<()> {
         eprintln!("Running memory migration v2 (TTL support)...");
 
         // Add expires_at column (NULL = never expires)
         conn.execute(
             "ALTER TABLE memories ADD COLUMN expires_at TEXT DEFAULT NULL",
-            (),
-        )
-        .await?;
+            [],
+        )?;
 
         // Index for efficient cleanup of expired entries
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL",
-            (),
-        )
-        .await?;
+            [],
+        )?;
 
         // Record migration
-        conn.execute("INSERT INTO _migrations (version) VALUES (2)", ())
-            .await?;
+        conn.execute("INSERT INTO _migrations (version) VALUES (2)", [])?;
 
         eprintln!("Memory migration v2 complete");
         Ok(())
@@ -153,22 +142,22 @@ impl Memory {
 
     /// Get a value by key (returns None if expired)
     pub async fn get(&self, tool: &str, key: &str) -> Result<Option<Value>> {
-        let conn = self.conn.read().await;
-        let mut rows = conn
-            .query(
-                "SELECT value FROM memories 
-                 WHERE tool = ? AND key = ? 
-                 AND (expires_at IS NULL OR expires_at > datetime('now'))",
-                [tool, key],
-            )
-            .await?;
+        let conn = self.conn.lock().await;
+        let result = conn.query_row(
+            "SELECT value FROM memories 
+             WHERE tool = ?1 AND key = ?2 
+             AND (expires_at IS NULL OR expires_at > datetime('now'))",
+            params![tool, key],
+            |row| row.get::<_, String>(0),
+        );
 
-        if let Some(row) = rows.next().await? {
-            let json_str: String = row.get(0)?;
-            let value: Value = serde_json::from_str(&json_str)?;
-            Ok(Some(value))
-        } else {
-            Ok(None)
+        match result {
+            Ok(json_str) => {
+                let value: Value = serde_json::from_str(&json_str)?;
+                Ok(Some(value))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -185,7 +174,7 @@ impl Memory {
         value: Value,
         ttl_secs: Option<u64>,
     ) -> Result<()> {
-        let conn = self.conn.write().await;
+        let conn = self.conn.lock().await;
         let json_str = serde_json::to_string(&value)?;
 
         // Calculate expiration time if TTL provided
@@ -205,21 +194,19 @@ impl Memory {
                             expires_at = datetime('now', '{}')",
                         offset, offset
                     ),
-                    [tool, key, &json_str],
-                )
-                .await?;
+                    params![tool, key, json_str],
+                )?;
             }
             None => {
                 conn.execute(
                     "INSERT INTO memories (tool, key, value, updated_at, expires_at)
-                     VALUES (?, ?, ?, datetime('now'), NULL)
+                     VALUES (?1, ?2, ?3, datetime('now'), NULL)
                      ON CONFLICT(tool, key) DO UPDATE SET
                         value = excluded.value,
                         updated_at = datetime('now'),
                         expires_at = NULL",
-                    [tool, key, &json_str],
-                )
-                .await?;
+                    params![tool, key, json_str],
+                )?;
             }
         }
 
@@ -228,113 +215,97 @@ impl Memory {
 
     /// List all keys for a tool (excludes expired)
     pub async fn list_keys(&self, tool: &str) -> Result<Vec<String>> {
-        let conn = self.conn.read().await;
-        let mut rows = conn
-            .query(
-                "SELECT key FROM memories 
-                 WHERE tool = ? 
-                 AND (expires_at IS NULL OR expires_at > datetime('now'))
-                 ORDER BY key",
-                [tool],
-            )
-            .await?;
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT key FROM memories 
+             WHERE tool = ?1 
+             AND (expires_at IS NULL OR expires_at > datetime('now'))
+             ORDER BY key",
+        )?;
 
-        let mut keys = Vec::new();
-        while let Some(row) = rows.next().await? {
-            keys.push(row.get::<String>(0)?);
-        }
+        let keys = stmt
+            .query_map(params![tool], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+
         Ok(keys)
     }
 
     /// Get all entries for a tool (excludes expired)
     #[allow(dead_code)]
     pub async fn get_all(&self, tool: &str) -> Result<Vec<(String, Value)>> {
-        let conn = self.conn.read().await;
-        let mut rows = conn
-            .query(
-                "SELECT key, value FROM memories 
-                 WHERE tool = ? 
-                 AND (expires_at IS NULL OR expires_at > datetime('now'))
-                 ORDER BY key",
-                [tool],
-            )
-            .await?;
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            "SELECT key, value FROM memories 
+             WHERE tool = ?1 
+             AND (expires_at IS NULL OR expires_at > datetime('now'))
+             ORDER BY key",
+        )?;
 
-        let mut entries = Vec::new();
-        while let Some(row) = rows.next().await? {
-            let key: String = row.get(0)?;
-            let value_str: String = row.get(1)?;
-            if let Ok(value) = serde_json::from_str(&value_str) {
-                entries.push((key, value));
-            }
-        }
+        let entries = stmt
+            .query_map(params![tool], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .filter_map(|(key, value_str)| {
+                serde_json::from_str(&value_str)
+                    .ok()
+                    .map(|value| (key, value))
+            })
+            .collect();
+
         Ok(entries)
     }
 
     /// Clean up expired entries (garbage collection)
     #[allow(dead_code)]
     pub async fn cleanup_expired(&self) -> Result<u64> {
-        let conn = self.conn.write().await;
-        let rows = conn
-            .execute(
-                "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')",
-                (),
-            )
-            .await?;
-        Ok(rows)
+        let conn = self.conn.lock().await;
+        let rows = conn.execute(
+            "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')",
+            [],
+        )?;
+        Ok(rows as u64)
     }
 
     /// Delete a key
     pub async fn delete(&self, tool: &str, key: &str) -> Result<bool> {
-        let conn = self.conn.write().await;
-        let rows = conn
-            .execute(
-                "DELETE FROM memories WHERE tool = ? AND key = ?",
-                [tool, key],
-            )
-            .await?;
+        let conn = self.conn.lock().await;
+        let rows = conn.execute(
+            "DELETE FROM memories WHERE tool = ?1 AND key = ?2",
+            params![tool, key],
+        )?;
         Ok(rows > 0)
     }
 
     /// Clear all memory for a tool
     pub async fn clear(&self, tool: &str) -> Result<u64> {
-        let conn = self.conn.write().await;
-        let rows = conn
-            .execute("DELETE FROM memories WHERE tool = ?", [tool])
-            .await?;
-        Ok(rows)
+        let conn = self.conn.lock().await;
+        let rows = conn.execute("DELETE FROM memories WHERE tool = ?1", params![tool])?;
+        Ok(rows as u64)
     }
 
     /// Clear all memory (all tools)
     #[allow(dead_code)]
     pub async fn clear_all(&self) -> Result<u64> {
-        let conn = self.conn.write().await;
-        let rows = conn.execute("DELETE FROM memories", ()).await?;
-        Ok(rows)
+        let conn = self.conn.lock().await;
+        let rows = conn.execute("DELETE FROM memories", [])?;
+        Ok(rows as u64)
     }
 
     // ==================== Stats ====================
 
     /// Get memory statistics
     pub async fn stats(&self) -> Result<MemoryStats> {
-        let conn = self.conn.read().await;
+        let conn = self.conn.lock().await;
 
-        let mut rows = conn.query("SELECT COUNT(*) FROM memories", ()).await?;
-        let total_entries: i64 = rows
-            .next()
-            .await?
-            .map(|r| r.get(0))
-            .transpose()?
+        let total_entries: i64 = conn
+            .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
             .unwrap_or(0);
 
-        let mut rows = conn
-            .query("SELECT COUNT(DISTINCT tool) FROM memories", ())
-            .await?;
-        let total_tools: i64 = rows
-            .next()
-            .await?
-            .map(|r| r.get(0))
-            .transpose()?
+        let total_tools: i64 = conn
+            .query_row("SELECT COUNT(DISTINCT tool) FROM memories", [], |row| {
+                row.get(0)
+            })
             .unwrap_or(0);
 
         Ok(MemoryStats {
