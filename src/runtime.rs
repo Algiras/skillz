@@ -372,6 +372,7 @@ impl ExecutionContext {
     }
 
     /// Set request metadata (_meta from MCP request)
+    #[allow(dead_code)]
     pub fn with_meta(mut self, meta: Option<RequestMeta>) -> Self {
         self.meta = meta;
         self

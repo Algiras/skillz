@@ -391,3 +391,5 @@ MIT License - see [LICENSE](LICENSE)
 [![Star on GitHub](https://img.shields.io/github/stars/Algiras/skillz?style=social)](https://github.com/Algiras/skillz)
 
 </div>
+
+

@@ -272,6 +272,7 @@ impl Memory {
     }
 
     /// Clean up expired entries (garbage collection)
+    #[allow(dead_code)]
     pub async fn cleanup_expired(&self) -> Result<u64> {
         let conn = self.conn.write().await;
         let rows = conn
@@ -619,3 +620,4 @@ mod tests {
         assert!(value.is_some());
     }
 }
+
