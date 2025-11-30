@@ -86,10 +86,13 @@ Support compiling from other languages to WASM:
 - [x] **Hot Reload** - Watch tools directory for changes, auto-reload
 - [x] **Versioning** - Auto-backup on update, rollback to any version
 - [x] **Resources** - Tools can list/read server resources (`resources/list`, `resources/read`)
+- [x] **Resource Templates** - URI templates with completion (`skillz://tools/{tool_name}`)
 - [x] **Secrets** - Forward `SKILLZ_*` env vars to tools for API keys, tokens
 - [x] **Caching/TTL** - Memory with TTL support (`memory/set` with `ttl` parameter)
 - [x] **Tools/Call** - Tools can call other tools (`tools/call` method)
 - [x] **Streaming** - Progressive output via `stream/chunk` notifications
+- [x] **_meta Forwarding** - Progress tokens forwarded from MCP requests
+- [x] **listChanged Notifications** - Hot reload emits tools/resources/prompts list changes
 
 ---
 

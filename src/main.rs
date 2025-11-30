@@ -13,9 +13,10 @@ use rmcp::schemars::JsonSchema;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        AnnotateAble, ListResourcesResult, LoggingLevel, LoggingMessageNotificationParam,
-        PaginatedRequestParam, ProgressNotificationParam, RawResource, ReadResourceRequestParam,
-        ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
+        AnnotateAble, ListResourceTemplatesResult, ListResourcesResult, LoggingLevel,
+        LoggingMessageNotificationParam, PaginatedRequestParam, ProgressNotificationParam,
+        RawResource, RawResourceTemplate, ReadResourceRequestParam, ReadResourceResult,
+        ResourceContents, ServerCapabilities, ServerInfo,
     },
     service::{NotificationContext, RequestContext},
     tool, tool_handler, tool_router,
@@ -301,14 +302,16 @@ impl AppState {
         // Set up progress handler that forwards to MCP peer
         let peer_for_progress = peer.clone();
         let progress_handler: runtime::ProgressHandler =
-            Arc::new(move |current, total, message| {
+            Arc::new(move |current, total, message, progress_token| {
                 let peer = peer_for_progress.clone();
                 Box::pin(async move {
                     if let Some(ref p) = *peer.read().await {
+                        // Use progress token from _meta if provided, otherwise use default
+                        let token = progress_token.unwrap_or_else(|| "tool_progress".to_string());
                         let _ = p
                             .notify_progress(ProgressNotificationParam {
                                 progress_token: rmcp::model::ProgressToken(
-                                    rmcp::model::NumberOrString::String("tool_progress".into()),
+                                    rmcp::model::NumberOrString::String(token.into()),
                                 ),
                                 progress: current as f64 / total as f64 * 100.0,
                                 total: Some(100.0),
@@ -1550,7 +1553,11 @@ impl ServerHandler for AppState {
             instructions: Some("Skillz - Build and execute custom tools at runtime. Supports WASM (Rust) and Script tools (Python, Node.js, Ruby, etc.) via JSON-RPC 2.0. NOTE: Skillz tools can ONLY call other Skillz tools, not tools from other MCP servers. CRITICAL: For Python scripts, use sys.stdin.readline() NOT sys.stdin.read() - read() blocks forever! Always call sys.stdout.flush() after printing.".into()),
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
+                .enable_tool_list_changed()
                 .enable_resources()
+                .enable_resources_list_changed()
+                .enable_prompts()
+                .enable_prompts_list_changed()
                 // Note: logging disabled temporarily due to Cursor sending setLevel before initialized
                 // which violates MCP spec (setLevel should come AFTER initialized notification)
                 // .enable_logging()
@@ -1627,6 +1634,32 @@ impl ServerHandler for AppState {
 
         Ok(ListResourcesResult {
             resources,
+            next_cursor: None,
+        })
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _ctx: RequestContext<RoleServer>,
+    ) -> std::result::Result<ListResourceTemplatesResult, McpError> {
+        // Provide URI templates for dynamic resources
+        let templates = vec![
+            RawResourceTemplate {
+                uri_template: "skillz://tools/{tool_name}".to_string(),
+                name: "Tool Information".to_string(),
+                title: Some("Tool Information".to_string()),
+                description: Some(
+                    "Get detailed information about a specific tool. Use tool names from list_tools."
+                        .to_string(),
+                ),
+                mime_type: Some("text/markdown".to_string()),
+            }
+            .no_annotation(),
+        ];
+
+        Ok(ListResourceTemplatesResult {
+            resource_templates: templates,
             next_cursor: None,
         })
     }
@@ -1979,6 +2012,7 @@ When Skillz calls your tool, it sends:
 - `tools_dir` - Directory where tools are stored
 - `environment` - Environment variables (HOME, USER, PATH, TERM, LANG + all SKILLZ_* vars)
 - `capabilities` - What MCP features the client supports
+- `_meta` - Request metadata (optional, contains `progressToken` for progress tracking)
 
 ### Environment Variables & Secrets
 Tools receive safe env vars plus **all `SKILLZ_*` prefixed variables** for secrets:
@@ -2693,6 +2727,7 @@ async fn main() -> Result<()> {
         match watcher::HotReload::start(storage_dir.clone()).await {
             Ok(mut hr) => {
                 let registry_clone = state.registry.clone();
+                let peer_for_hot_reload = state.peer.clone();
                 // Spawn task to handle reload events
                 tokio::spawn(async move {
                     while let Some(event) = hr.next_event().await {
@@ -2703,6 +2738,10 @@ async fn main() -> Result<()> {
                                     eprintln!("   ❌ Failed to reload {}: {}", name, e);
                                 } else {
                                     eprintln!("   ✅ {} reloaded successfully", name);
+                                    // Notify client that tool list changed
+                                    if let Some(ref p) = *peer_for_hot_reload.read().await {
+                                        let _ = p.notify_tool_list_changed().await;
+                                    }
                                 }
                             }
                             watcher::WatchEvent::ToolAdded(name) => {
@@ -2711,11 +2750,19 @@ async fn main() -> Result<()> {
                                     eprintln!("   ❌ Failed to load {}: {}", name, e);
                                 } else {
                                     eprintln!("   ✅ {} loaded successfully", name);
+                                    // Notify client that tool list changed
+                                    if let Some(ref p) = *peer_for_hot_reload.read().await {
+                                        let _ = p.notify_tool_list_changed().await;
+                                    }
                                 }
                             }
                             watcher::WatchEvent::ToolRemoved(name) => {
                                 eprintln!("🗑️ Hot reload: {} removed", name);
                                 registry_clone.unload_tool(&name);
+                                // Notify client that tool list changed
+                                if let Some(ref p) = *peer_for_hot_reload.read().await {
+                                    let _ = p.notify_tool_list_changed().await;
+                                }
                             }
                             watcher::WatchEvent::Error(e) => {
                                 eprintln!("⚠️ Hot reload error: {}", e);

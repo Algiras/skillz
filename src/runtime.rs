@@ -282,6 +282,17 @@ pub struct ClientCapabilities {
     pub resources: bool,
 }
 
+/// MCP request metadata (_meta field)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RequestMeta {
+    /// Progress token for tracking this request's progress
+    #[serde(rename = "progressToken", skip_serializing_if = "Option::is_none")]
+    pub progress_token: Option<String>,
+    /// Additional metadata fields (extensible)
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, Value>,
+}
+
 /// Context information passed to scripts (like MCP roots)
 #[derive(Debug, Clone, Serialize)]
 pub struct ExecutionContext {
@@ -298,6 +309,9 @@ pub struct ExecutionContext {
     pub tools_dir: String,
     /// Client capabilities (what features the client supports)
     pub capabilities: ClientCapabilities,
+    /// Request metadata (_meta from MCP request)
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<RequestMeta>,
 }
 
 impl Default for ExecutionContext {
@@ -342,6 +356,7 @@ impl Default for ExecutionContext {
             environment: env,
             tools_dir,
             capabilities: ClientCapabilities::default(),
+            meta: None,
         }
     }
 }
@@ -353,6 +368,12 @@ impl ExecutionContext {
         if !roots.is_empty() {
             self.roots = roots;
         }
+        self
+    }
+
+    /// Set request metadata (_meta from MCP request)
+    pub fn with_meta(mut self, meta: Option<RequestMeta>) -> Self {
+        self.meta = meta;
         self
     }
 
@@ -462,10 +483,12 @@ pub type LoggingHandler = std::sync::Arc<
 >;
 
 /// Type alias for progress handler callback (forwards progress to MCP client)
+/// Parameters: current, total, message, progress_token (from _meta)
 pub type ProgressHandler = std::sync::Arc<
     dyn Fn(
             u64,
             u64,
+            Option<String>,
             Option<String>,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
         + Send
@@ -909,7 +932,13 @@ impl ToolRuntime {
                                         let current = prog.current;
                                         let total = prog.total;
                                         let message = prog.message.clone();
-                                        handle.block_on(handler(current, total, message));
+                                        // Get progress token from _meta
+                                        let progress_token = self
+                                            .context
+                                            .meta
+                                            .as_ref()
+                                            .and_then(|m| m.progress_token.clone());
+                                        handle.block_on(handler(current, total, message, progress_token));
                                     }
 
                                     progress.push(prog);
