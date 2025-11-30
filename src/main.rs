@@ -13,10 +13,10 @@ use rmcp::schemars::JsonSchema;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        AnnotateAble, ListResourceTemplatesResult, ListResourcesResult, LoggingLevel,
-        LoggingMessageNotificationParam, PaginatedRequestParam, ProgressNotificationParam,
-        RawResource, RawResourceTemplate, ReadResourceRequestParam, ReadResourceResult,
-        ResourceContents, ServerCapabilities, ServerInfo,
+        AnnotateAble, CancelledNotificationParam, ListResourceTemplatesResult, ListResourcesResult,
+        LoggingLevel, LoggingMessageNotificationParam, PaginatedRequestParam,
+        ProgressNotificationParam, RawResource, RawResourceTemplate, ReadResourceRequestParam,
+        ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
     },
     service::{NotificationContext, RequestContext},
     tool, tool_handler, tool_router,
@@ -1591,6 +1591,27 @@ impl ServerHandler for AppState {
         }
 
         self.update_peer(ctx.peer).await;
+    }
+
+    /// Called when a client requests cancellation of a running operation
+    async fn on_cancelled(
+        &self,
+        notification: CancelledNotificationParam,
+        _ctx: NotificationContext<RoleServer>,
+    ) {
+        // Log cancellation request
+        // Note: Full cancellation support would require tracking running processes
+        // by request_id and killing them. For now, we just acknowledge the request.
+        eprintln!(
+            "⚠️ Cancellation requested for request_id: {:?} (reason: {:?})",
+            notification.request_id, notification.reason
+        );
+
+        // TODO: Implement process tracking and killing for script tools
+        // This would require:
+        // 1. Storing child process handles in a map keyed by request_id
+        // 2. Looking up the process here and calling .kill()
+        // 3. Coordinating with the async tool execution to handle the cancellation
     }
 
     async fn list_resources(
