@@ -2311,6 +2311,36 @@ def stream_chunk(data, index=None, is_final=False):
 
 ---
 
+## 🔔 MCP Server Capabilities
+
+Skillz implements full MCP protocol support with these server capabilities:
+
+### Tools
+- `tools/list` - List all registered tools
+- `tools/call` - Execute a tool
+- `notifications/tools/list_changed` - Emitted when tools change (hot reload)
+
+### Resources  
+- `resources/list` - List available resources
+- `resources/read` - Read resource content
+- `resources/templates/list` - URI templates with completion
+- `resources/subscribe` - Subscribe to resource updates
+- `resources/unsubscribe` - Unsubscribe from updates
+- `notifications/resources/list_changed` - Emitted when resource list changes
+- `notifications/resources/updated` - Emitted when subscribed resource changes
+
+### Prompts
+- `prompts/list` - List available prompts
+- `prompts/get` - Get prompt details
+- `notifications/prompts/list_changed` - Emitted when prompts change
+
+### Utilities
+- `logging/setLevel` - Set logging level
+- Progress notifications with `_meta.progressToken` support
+- Cancellation handler (`notifications/cancelled`)
+
+---
+
 ## 🎤 Elicitation (User Input)
 
 Request structured input from the user during tool execution.

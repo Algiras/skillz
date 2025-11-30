@@ -8,7 +8,7 @@
 [![CI](https://github.com/Algiras/skillz/actions/workflows/ci.yml/badge.svg)](https://github.com/Algiras/skillz/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
-[![MCP](https://img.shields.io/badge/MCP-2024--11--05-blue.svg)](https://modelcontextprotocol.io/)
+[![MCP](https://img.shields.io/badge/MCP-Full%20Support-blue.svg)](https://modelcontextprotocol.io/)
 
 **Build and execute custom tools at runtime. Let your AI create its own tools.**
 
@@ -207,6 +207,10 @@ curl -X POST http://localhost:8080/message \
 | 📊 **Logging/Progress** | Scripts can send logs and progress updates |
 | 🔥 **Hot Reload** | Watch tools directory, auto-reload on changes |
 | 📦 **Versioning** | Auto-backup on update, rollback to any version |
+| 🔔 **Subscriptions** | Subscribe to resource updates, get notified on changes |
+| 📋 **listChanged** | Hot reload emits MCP list changed notifications |
+| 🎯 **_meta Support** | Progress tokens forwarded from MCP requests |
+| ⛔ **Cancellation** | Handle cancellation requests for running tools |
 
 ---
 
