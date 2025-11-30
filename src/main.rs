@@ -16,7 +16,8 @@ use rmcp::{
         AnnotateAble, CancelledNotificationParam, ListResourceTemplatesResult, ListResourcesResult,
         LoggingLevel, LoggingMessageNotificationParam, PaginatedRequestParam,
         ProgressNotificationParam, RawResource, RawResourceTemplate, ReadResourceRequestParam,
-        ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
+        ReadResourceResult, ResourceContents, ResourceUpdatedNotificationParam, ServerCapabilities,
+        ServerInfo, SubscribeRequestParam, UnsubscribeRequestParam,
     },
     service::{NotificationContext, RequestContext},
     tool, tool_handler, tool_router,
@@ -85,6 +86,9 @@ struct McpClientCapabilities {
 
 type SharedClientCaps = Arc<RwLock<McpClientCapabilities>>;
 
+/// Subscribed resource URIs (for resource update notifications)
+type SharedSubscriptions = Arc<RwLock<std::collections::HashSet<String>>>;
+
 #[derive(Clone)]
 struct AppState {
     registry: registry::ToolRegistry,
@@ -95,6 +99,8 @@ struct AppState {
     peer: SharedPeer,
     /// Actual client capabilities from MCP initialization
     client_caps: SharedClientCaps,
+    /// Subscribed resource URIs
+    subscriptions: SharedSubscriptions,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -528,6 +534,7 @@ impl AppState {
             tool_router: Self::tool_router(),
             peer,
             client_caps: Arc::new(RwLock::new(McpClientCapabilities::default())),
+            subscriptions: Arc::new(RwLock::new(std::collections::HashSet::new())),
         }
     }
 
@@ -1556,6 +1563,7 @@ impl ServerHandler for AppState {
                 .enable_tool_list_changed()
                 .enable_resources()
                 .enable_resources_list_changed()
+                .enable_resources_subscribe()
                 .enable_prompts()
                 .enable_prompts_list_changed()
                 // Note: logging disabled temporarily due to Cursor sending setLevel before initialized
@@ -1612,6 +1620,47 @@ impl ServerHandler for AppState {
         // 1. Storing child process handles in a map keyed by request_id
         // 2. Looking up the process here and calling .kill()
         // 3. Coordinating with the async tool execution to handle the cancellation
+    }
+
+    /// Subscribe to resource updates
+    async fn subscribe(
+        &self,
+        request: SubscribeRequestParam,
+        _ctx: RequestContext<RoleServer>,
+    ) -> std::result::Result<(), McpError> {
+        let uri = request.uri;
+        eprintln!("📡 Subscribing to resource: {}", uri);
+
+        // Validate the URI exists
+        let valid = uri == "skillz://guide"
+            || uri == "skillz://examples"
+            || uri == "skillz://protocol"
+            || uri.starts_with("skillz://tools/");
+
+        if !valid {
+            return Err(McpError::resource_not_found(
+                "Resource not found",
+                Some(serde_json::json!({ "uri": uri })),
+            ));
+        }
+
+        // Add to subscriptions
+        self.subscriptions.write().await.insert(uri);
+        Ok(())
+    }
+
+    /// Unsubscribe from resource updates
+    async fn unsubscribe(
+        &self,
+        request: UnsubscribeRequestParam,
+        _ctx: RequestContext<RoleServer>,
+    ) -> std::result::Result<(), McpError> {
+        let uri = request.uri;
+        eprintln!("📡 Unsubscribing from resource: {}", uri);
+
+        // Remove from subscriptions
+        self.subscriptions.write().await.remove(&uri);
+        Ok(())
     }
 
     async fn list_resources(
@@ -2749,6 +2798,7 @@ async fn main() -> Result<()> {
             Ok(mut hr) => {
                 let registry_clone = state.registry.clone();
                 let peer_for_hot_reload = state.peer.clone();
+                let subscriptions_for_hot_reload = state.subscriptions.clone();
                 // Spawn task to handle reload events
                 tokio::spawn(async move {
                     while let Some(event) = hr.next_event().await {
@@ -2759,9 +2809,16 @@ async fn main() -> Result<()> {
                                     eprintln!("   ❌ Failed to reload {}: {}", name, e);
                                 } else {
                                     eprintln!("   ✅ {} reloaded successfully", name);
-                                    // Notify client that tool list changed
                                     if let Some(ref p) = *peer_for_hot_reload.read().await {
+                                        // Notify tool list changed
                                         let _ = p.notify_tool_list_changed().await;
+                                        // Notify resource updated for subscribed tool resources
+                                        let tool_uri = format!("skillz://tools/{}", name);
+                                        if subscriptions_for_hot_reload.read().await.contains(&tool_uri) {
+                                            let _ = p.notify_resource_updated(ResourceUpdatedNotificationParam {
+                                                uri: tool_uri,
+                                            }).await;
+                                        }
                                     }
                                 }
                             }
@@ -2771,18 +2828,22 @@ async fn main() -> Result<()> {
                                     eprintln!("   ❌ Failed to load {}: {}", name, e);
                                 } else {
                                     eprintln!("   ✅ {} loaded successfully", name);
-                                    // Notify client that tool list changed
                                     if let Some(ref p) = *peer_for_hot_reload.read().await {
+                                        // Notify tool list changed
                                         let _ = p.notify_tool_list_changed().await;
+                                        // Notify resource list changed (new tool resource)
+                                        let _ = p.notify_resource_list_changed().await;
                                     }
                                 }
                             }
                             watcher::WatchEvent::ToolRemoved(name) => {
                                 eprintln!("🗑️ Hot reload: {} removed", name);
                                 registry_clone.unload_tool(&name);
-                                // Notify client that tool list changed
                                 if let Some(ref p) = *peer_for_hot_reload.read().await {
+                                    // Notify tool list changed
                                     let _ = p.notify_tool_list_changed().await;
+                                    // Notify resource list changed (tool resource removed)
+                                    let _ = p.notify_resource_list_changed().await;
                                 }
                             }
                             watcher::WatchEvent::Error(e) => {

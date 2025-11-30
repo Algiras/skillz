@@ -94,6 +94,7 @@ Support compiling from other languages to WASM:
 - [x] **_meta Forwarding** - Progress tokens forwarded from MCP requests
 - [x] **listChanged Notifications** - Hot reload emits tools/resources/prompts list changes
 - [x] **Cancellation Handler** - `on_cancelled` handler logs cancellation requests (process killing TODO)
+- [x] **Resource Subscriptions** - `subscribe`/`unsubscribe` methods + `notify_resource_updated` on changes
 
 ---
 
