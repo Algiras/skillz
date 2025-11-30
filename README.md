@@ -200,6 +200,8 @@ curl -X POST http://localhost:8080/message \
 | 🌍 **HTTP Transport** | Run as HTTP server with SSE for web apps |
 | 💬 **Elicitation** | Scripts can request user input via MCP protocol |
 | 🧠 **Memory** | Persistent key-value storage for tools |
+| 📦 **Resources** | Tools can list and read server resources |
+| 🔐 **Secrets** | Forward `SKILLZ_*` env vars to tools |
 | 📊 **Logging/Progress** | Scripts can send logs and progress updates |
 | 🔥 **Hot Reload** | Watch tools directory, auto-reload on changes |
 | 📦 **Versioning** | Auto-backup on update, rollback to any version |
@@ -258,8 +260,28 @@ build_tool(
 | `SKILLZ_ROOTS` | Workspace roots (colon-separated) | `/home/user/project:/data` |
 | `SKILLZ_SANDBOX` | Sandbox mode | `bubblewrap`, `firejail`, `nsjail` |
 | `SKILLZ_SANDBOX_NETWORK` | Allow network in sandbox | `1` |
+| `SKILLZ_*` | **Forwarded to tools** (for secrets) | `SKILLZ_OPENAI_KEY=sk-...` |
 
 **Root Priority:** MCP client roots > `SKILLZ_ROOTS` env > cwd
+
+### 🔐 Secrets via Environment Variables
+
+All `SKILLZ_*` prefixed env vars are forwarded to script tools:
+
+```bash
+# Set secrets in your shell
+export SKILLZ_OPENAI_KEY="sk-..."
+export SKILLZ_API_TOKEN="your-secret"
+export SKILLZ_DEBUG="1"
+```
+
+Access in tools via `context.environment`:
+```python
+env = request["params"]["context"]["environment"]
+api_key = env.get("SKILLZ_OPENAI_KEY")
+```
+
+> **Note:** Only `SKILLZ_*` vars are forwarded. Other env vars are not exposed to tools for security.
 
 ---
 
