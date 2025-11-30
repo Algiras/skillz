@@ -3,6 +3,11 @@ name: Publish & Release
 on:
   push:
     branches: [master]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/publish.yml'
   workflow_dispatch:
     inputs:
       dry_run:
