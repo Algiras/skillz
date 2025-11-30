@@ -521,7 +521,8 @@ pub struct ResourceContent {
 
 /// Type alias for resource list handler callback
 pub type ResourceListHandler = std::sync::Arc<
-    dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<ResourceInfo>>> + Send>>
+    dyn Fn()
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<ResourceInfo>>> + Send>>
         + Send
         + Sync,
 >;
@@ -530,7 +531,8 @@ pub type ResourceListHandler = std::sync::Arc<
 pub type ResourceReadHandler = std::sync::Arc<
     dyn Fn(
             String,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ResourceContent>> + Send>>
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ResourceContent>> + Send>>
         + Send
         + Sync,
 >;
@@ -538,8 +540,8 @@ pub type ResourceReadHandler = std::sync::Arc<
 /// Type alias for tools/call handler callback (tools calling other tools)
 pub type ToolCallHandler = std::sync::Arc<
     dyn Fn(
-            String,              // tool name
-            Option<Value>,       // arguments
+            String,        // tool name
+            Option<Value>, // arguments
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>>
         + Send
         + Sync,
@@ -551,7 +553,6 @@ pub type StreamHandler = std::sync::Arc<
         + Send
         + Sync,
 >;
-
 
 #[derive(Clone)]
 pub struct ToolRuntime {
@@ -939,14 +940,19 @@ impl ToolRuntime {
                                             .meta
                                             .as_ref()
                                             .and_then(|m| m.progress_token.clone());
-                                        handle.block_on(handler(current, total, message, progress_token));
+                                        handle.block_on(handler(
+                                            current,
+                                            total,
+                                            message,
+                                            progress_token,
+                                        ));
                                     }
 
                                     progress.push(prog);
                                 }
                             }
                         }
-                        
+
                         // ===== Stream chunks (partial results) =====
                         "stream" | "stream/chunk" => {
                             if let Some(params) = response.params {
@@ -1005,7 +1011,9 @@ impl ToolRuntime {
                                     // Optional TTL in seconds (for caching)
                                     let ttl = params.get("ttl").and_then(|v| v.as_u64());
                                     let handle = tokio::runtime::Handle::current();
-                                    match handle.block_on(mem.set_with_ttl(&tool_name, key, value, ttl)) {
+                                    match handle
+                                        .block_on(mem.set_with_ttl(&tool_name, key, value, ttl))
+                                    {
                                         Ok(()) => serde_json::json!({"success": true}),
                                         Err(e) => serde_json::json!({"error": e.to_string()}),
                                     }
@@ -1178,7 +1186,9 @@ impl ToolRuntime {
                                         let handle = tokio::runtime::Handle::current();
                                         let handler = handler.clone();
                                         match handle.block_on(handler(uri)) {
-                                            Ok(content) => serde_json::json!({"contents": [content]}),
+                                            Ok(content) => {
+                                                serde_json::json!({"contents": [content]})
+                                            }
                                             Err(e) => serde_json::json!({"error": e.to_string()}),
                                         }
                                     }
@@ -1217,7 +1227,9 @@ impl ToolRuntime {
                                         let handler = handler.clone();
                                         match handle.block_on(handler(name.clone(), arguments)) {
                                             Ok(output) => serde_json::json!({"output": output}),
-                                            Err(e) => serde_json::json!({"error": format!("Tool '{}' failed: {}", name, e)}),
+                                            Err(e) => {
+                                                serde_json::json!({"error": format!("Tool '{}' failed: {}", name, e)})
+                                            }
                                         }
                                     }
                                 } else {

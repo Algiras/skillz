@@ -565,7 +565,7 @@ impl AppState {
     )]
     async fn build_tool(&self, Parameters(args): Parameters<BuildToolArgs>) -> String {
         eprintln!("Building WASM tool: {}", args.name);
-        
+
         // Check if tool exists
         if self.registry.get_tool(&args.name).is_some() && !args.overwrite.unwrap_or(false) {
             return format!(
@@ -585,9 +585,9 @@ impl AppState {
                     Ok(bytes) => bytes,
                     Err(e) => return format!("Error reading compiled WASM: {}", e),
                 },
-            Err(e) => return format!("Compilation error: {}", e),
-        };
-        
+                Err(e) => return format!("Compilation error: {}", e),
+            };
+
         // Build manifest
         let mut manifest = registry::ToolManifest::new(
             args.name.clone(),
@@ -815,12 +815,12 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
     #[doc = "NOTE: This tool can ONLY call tools registered within Skillz, not tools from other MCP servers."]
     async fn call_tool(&self, Parameters(args): Parameters<CallToolArgs>) -> String {
         eprintln!("Calling tool: {}", args.tool_name);
-        
+
         let tool = match self.registry.get_tool(&args.tool_name) {
             Some(t) => t,
             None => return format!("Error: Tool '{}' not found", args.tool_name),
         };
-        
+
         let tool_args = args.arguments.unwrap_or(serde_json::json!({}));
 
         // Handle pipeline tools specially
@@ -981,7 +981,7 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
             tool.name(),
             if pipeline_success {
                 "Completed"
-        } else {
+            } else {
                 "Failed"
             },
             total_duration_ms
@@ -1142,7 +1142,7 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
                 if result.status.success() {
                     if stderr.is_empty() {
                         format!("✅ **Execution Result**\n\n```\n{}\n```", stdout.trim())
-        } else {
+                    } else {
                         format!(
                             "✅ **Execution Result**\n\n```\n{}\n```\n\n**Logs:**\n```\n{}\n```",
                             stdout.trim(),
@@ -1318,7 +1318,7 @@ pipeline(action: "create", name: "my_pipeline", steps: [
                         .into_iter()
                         .filter(|p| p.manifest.tags.contains(tag))
                         .collect()
-        } else {
+                } else {
                     pipelines
                 };
 
@@ -1714,19 +1714,17 @@ impl ServerHandler for AppState {
         _ctx: RequestContext<RoleServer>,
     ) -> std::result::Result<ListResourceTemplatesResult, McpError> {
         // Provide URI templates for dynamic resources
-        let templates = vec![
-            RawResourceTemplate {
-                uri_template: "skillz://tools/{tool_name}".to_string(),
-                name: "Tool Information".to_string(),
-                title: Some("Tool Information".to_string()),
-                description: Some(
-                    "Get detailed information about a specific tool. Use tool names from list_tools."
-                        .to_string(),
-                ),
-                mime_type: Some("text/markdown".to_string()),
-            }
-            .no_annotation(),
-        ];
+        let templates = vec![RawResourceTemplate {
+            uri_template: "skillz://tools/{tool_name}".to_string(),
+            name: "Tool Information".to_string(),
+            title: Some("Tool Information".to_string()),
+            description: Some(
+                "Get detailed information about a specific tool. Use tool names from list_tools."
+                    .to_string(),
+            ),
+            mime_type: Some("text/markdown".to_string()),
+        }
+        .no_annotation()];
 
         Ok(ListResourceTemplatesResult {
             resource_templates: templates,
@@ -2628,7 +2626,8 @@ Script tools communicate via JSON-RPC 2.0 over stdin/stdout and can:
 - 📦 **Resources** - List and read server resources
 
 See `skillz://protocol` for the complete protocol specification.
-"##.to_string()
+"##
+    .to_string()
 }
 
 fn get_examples_content_static() -> String {
@@ -2680,7 +2679,8 @@ rl.on('line', (line) => {
     process.exit(0);
 });
 ```
-"##.to_string()
+"##
+    .to_string()
 }
 
 fn get_protocol_content_static() -> String {
@@ -2803,10 +2803,10 @@ async fn main() -> Result<()> {
 
     // Get tools directory from env var or use ~/tools as default
     let tools_dir = std::env::var("TOOLS_DIR").unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-            format!("{}/tools", home)
-        });
-    
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        format!("{}/tools", home)
+    });
+
     let storage_dir = std::path::PathBuf::from(tools_dir);
     std::fs::create_dir_all(&storage_dir)?;
 
@@ -2844,10 +2844,18 @@ async fn main() -> Result<()> {
                                         let _ = p.notify_tool_list_changed().await;
                                         // Notify resource updated for subscribed tool resources
                                         let tool_uri = format!("skillz://tools/{}", name);
-                                        if subscriptions_for_hot_reload.read().await.contains(&tool_uri) {
-                                            let _ = p.notify_resource_updated(ResourceUpdatedNotificationParam {
-                                                uri: tool_uri,
-                                            }).await;
+                                        if subscriptions_for_hot_reload
+                                            .read()
+                                            .await
+                                            .contains(&tool_uri)
+                                        {
+                                            let _ = p
+                                                .notify_resource_updated(
+                                                    ResourceUpdatedNotificationParam {
+                                                        uri: tool_uri,
+                                                    },
+                                                )
+                                                .await;
                                         }
                                     }
                                 }
@@ -2899,7 +2907,7 @@ async fn main() -> Result<()> {
             if cli.hot_reload {
                 eprintln!("🔥 Hot reload enabled");
             }
-    state.serve(stdio()).await?.waiting().await?;
+            state.serve(stdio()).await?.waiting().await?;
         }
         "http" | "sse" => {
             use rmcp::transport::sse_server::{SseServer, SseServerConfig};

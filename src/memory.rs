@@ -583,7 +583,12 @@ mod tests {
 
         // Set with TTL=0 (should also never expire)
         memory
-            .set_with_ttl("test_tool", "also_permanent", serde_json::json!("forever"), Some(0))
+            .set_with_ttl(
+                "test_tool",
+                "also_permanent",
+                serde_json::json!("forever"),
+                Some(0),
+            )
             .await
             .unwrap();
 
@@ -620,4 +625,3 @@ mod tests {
         assert!(value.is_some());
     }
 }
-

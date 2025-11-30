@@ -106,3 +106,17 @@ Have an idea? Open an issue on GitHub or submit a PR adding to this document!
 
 *Last updated: November 2025*
 
+
+- [x] **Cancellation Handler** - `on_cancelled` handler logs cancellation requests (process killing TODO)
+- [x] **Resource Subscriptions** - `subscribe`/`unsubscribe` methods + `notify_resource_updated` on changes
+
+---
+
+## 📝 Contributing Ideas
+
+Have an idea? Open an issue on GitHub or submit a PR adding to this document!
+
+---
+
+*Last updated: November 2025*
+
