@@ -1923,8 +1923,20 @@ When Skillz calls your tool, it sends:
 - `working_directory` - Current working directory
 - `tool_name` - Name of the executing tool
 - `tools_dir` - Directory where tools are stored
-- `environment` - Safe environment variables
+- `environment` - Environment variables (HOME, USER, PATH, TERM, LANG + all SKILLZ_* vars)
 - `capabilities` - What MCP features the client supports
+
+### Environment Variables & Secrets
+Tools receive safe env vars plus **all `SKILLZ_*` prefixed variables** for secrets:
+```bash
+export SKILLZ_OPENAI_KEY="sk-..."
+export SKILLZ_API_TOKEN="secret123"
+```
+Access in your tool:
+```python
+context = request["params"]["context"]
+api_key = context["environment"].get("SKILLZ_OPENAI_KEY")
+```
 
 ### Configuring Roots
 Roots are resolved in this priority order:

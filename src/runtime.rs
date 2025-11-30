@@ -328,6 +328,13 @@ impl Default for ExecutionContext {
             }
         }
 
+        // Forward all SKILLZ_* env vars (for secrets like SKILLZ_OPENAI_KEY)
+        for (key, val) in std::env::vars() {
+            if key.starts_with("SKILLZ_") {
+                env.insert(key, val);
+            }
+        }
+
         Self {
             roots,
             working_directory: cwd,
