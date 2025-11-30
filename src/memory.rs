@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Current schema version - increment when making breaking changes
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 /// Memory store for tool state persistence
 #[derive(Clone)]
@@ -76,10 +76,9 @@ impl Memory {
             self.migrate_v1(&conn).await?;
         }
 
-        // Future migrations:
-        // if current_version < 2 {
-        //     self.migrate_v2(&conn).await?;  // Add embedding column
-        // }
+        if current_version < 2 {
+            self.migrate_v2(&conn).await?;
+        }
 
         Ok(())
     }
@@ -124,14 +123,42 @@ impl Memory {
         Ok(())
     }
 
+    /// Migration v2: Add TTL/expiration support
+    async fn migrate_v2(&self, conn: &Connection) -> Result<()> {
+        eprintln!("Running memory migration v2 (TTL support)...");
+
+        // Add expires_at column (NULL = never expires)
+        conn.execute(
+            "ALTER TABLE memories ADD COLUMN expires_at TEXT DEFAULT NULL",
+            (),
+        )
+        .await?;
+
+        // Index for efficient cleanup of expired entries
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL",
+            (),
+        )
+        .await?;
+
+        // Record migration
+        conn.execute("INSERT INTO _migrations (version) VALUES (2)", ())
+            .await?;
+
+        eprintln!("Memory migration v2 complete");
+        Ok(())
+    }
+
     // ==================== Key-Value Operations ====================
 
-    /// Get a value by key
+    /// Get a value by key (returns None if expired)
     pub async fn get(&self, tool: &str, key: &str) -> Result<Option<Value>> {
         let conn = self.conn.read().await;
         let mut rows = conn
             .query(
-                "SELECT value FROM memories WHERE tool = ? AND key = ?",
+                "SELECT value FROM memories 
+                 WHERE tool = ? AND key = ? 
+                 AND (expires_at IS NULL OR expires_at > datetime('now'))",
                 [tool, key],
             )
             .await?;
@@ -145,30 +172,69 @@ impl Memory {
         }
     }
 
-    /// Set a value
+    /// Set a value (without TTL - never expires)
     pub async fn set(&self, tool: &str, key: &str, value: Value) -> Result<()> {
+        self.set_with_ttl(tool, key, value, None).await
+    }
+
+    /// Set a value with optional TTL in seconds (None = never expires)
+    pub async fn set_with_ttl(
+        &self,
+        tool: &str,
+        key: &str,
+        value: Value,
+        ttl_secs: Option<u64>,
+    ) -> Result<()> {
         let conn = self.conn.write().await;
         let json_str = serde_json::to_string(&value)?;
 
-        conn.execute(
-            "INSERT INTO memories (tool, key, value, updated_at)
-             VALUES (?, ?, ?, datetime('now'))
-             ON CONFLICT(tool, key) DO UPDATE SET
-                value = excluded.value,
-                updated_at = datetime('now')",
-            [tool, key, &json_str],
-        )
-        .await?;
+        // Calculate expiration time if TTL provided
+        let expires_at = ttl_secs
+            .filter(|&t| t > 0)
+            .map(|t| format!("+{} seconds", t));
+
+        match expires_at {
+            Some(offset) => {
+                conn.execute(
+                    &format!(
+                        "INSERT INTO memories (tool, key, value, updated_at, expires_at)
+                         VALUES (?1, ?2, ?3, datetime('now'), datetime('now', '{}'))
+                         ON CONFLICT(tool, key) DO UPDATE SET
+                            value = excluded.value,
+                            updated_at = datetime('now'),
+                            expires_at = datetime('now', '{}')",
+                        offset, offset
+                    ),
+                    [tool, key, &json_str],
+                )
+                .await?;
+            }
+            None => {
+                conn.execute(
+                    "INSERT INTO memories (tool, key, value, updated_at, expires_at)
+                     VALUES (?, ?, ?, datetime('now'), NULL)
+                     ON CONFLICT(tool, key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = datetime('now'),
+                        expires_at = NULL",
+                    [tool, key, &json_str],
+                )
+                .await?;
+            }
+        }
 
         Ok(())
     }
 
-    /// List all keys for a tool
+    /// List all keys for a tool (excludes expired)
     pub async fn list_keys(&self, tool: &str) -> Result<Vec<String>> {
         let conn = self.conn.read().await;
         let mut rows = conn
             .query(
-                "SELECT key FROM memories WHERE tool = ? ORDER BY key",
+                "SELECT key FROM memories 
+                 WHERE tool = ? 
+                 AND (expires_at IS NULL OR expires_at > datetime('now'))
+                 ORDER BY key",
                 [tool],
             )
             .await?;
@@ -180,13 +246,16 @@ impl Memory {
         Ok(keys)
     }
 
-    /// Get all entries for a tool
+    /// Get all entries for a tool (excludes expired)
     #[allow(dead_code)]
     pub async fn get_all(&self, tool: &str) -> Result<Vec<(String, Value)>> {
         let conn = self.conn.read().await;
         let mut rows = conn
             .query(
-                "SELECT key, value FROM memories WHERE tool = ? ORDER BY key",
+                "SELECT key, value FROM memories 
+                 WHERE tool = ? 
+                 AND (expires_at IS NULL OR expires_at > datetime('now'))
+                 ORDER BY key",
                 [tool],
             )
             .await?;
@@ -200,6 +269,18 @@ impl Memory {
             }
         }
         Ok(entries)
+    }
+
+    /// Clean up expired entries (garbage collection)
+    pub async fn cleanup_expired(&self) -> Result<u64> {
+        let conn = self.conn.write().await;
+        let rows = conn
+            .execute(
+                "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')",
+                (),
+            )
+            .await?;
+        Ok(rows)
     }
 
     /// Delete a key
@@ -465,5 +546,76 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert_eq!(all[0], ("a".to_string(), serde_json::json!(1)));
         assert_eq!(all[1], ("b".to_string(), serde_json::json!(2)));
+    }
+
+    #[tokio::test]
+    async fn test_ttl_expiration() {
+        let (memory, _dir) = create_test_memory().await;
+
+        // Set with 1 second TTL
+        memory
+            .set_with_ttl("test_tool", "temp", serde_json::json!("expires"), Some(1))
+            .await
+            .unwrap();
+
+        // Should exist immediately
+        let value = memory.get("test_tool", "temp").await.unwrap();
+        assert!(value.is_some());
+
+        // Wait for expiration
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // Should be expired now
+        let value = memory.get("test_tool", "temp").await.unwrap();
+        assert!(value.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_no_ttl_never_expires() {
+        let (memory, _dir) = create_test_memory().await;
+
+        // Set without TTL
+        memory
+            .set_with_ttl("test_tool", "permanent", serde_json::json!("forever"), None)
+            .await
+            .unwrap();
+
+        // Set with TTL=0 (should also never expire)
+        memory
+            .set_with_ttl("test_tool", "also_permanent", serde_json::json!("forever"), Some(0))
+            .await
+            .unwrap();
+
+        let val1 = memory.get("test_tool", "permanent").await.unwrap();
+        let val2 = memory.get("test_tool", "also_permanent").await.unwrap();
+
+        assert!(val1.is_some());
+        assert!(val2.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired() {
+        let (memory, _dir) = create_test_memory().await;
+
+        // Set one permanent, one expiring
+        memory
+            .set("test_tool", "permanent", serde_json::json!(1))
+            .await
+            .unwrap();
+        memory
+            .set_with_ttl("test_tool", "temp", serde_json::json!(2), Some(1))
+            .await
+            .unwrap();
+
+        // Wait for expiration
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // Cleanup
+        let cleaned = memory.cleanup_expired().await.unwrap();
+        assert_eq!(cleaned, 1);
+
+        // Permanent should still exist
+        let value = memory.get("test_tool", "permanent").await.unwrap();
+        assert!(value.is_some());
     }
 }

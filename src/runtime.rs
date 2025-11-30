@@ -498,6 +498,7 @@ pub type ResourceReadHandler = std::sync::Arc<
         + Sync,
 >;
 
+
 #[derive(Clone)]
 pub struct ToolRuntime {
     engine: Engine,
@@ -901,8 +902,10 @@ impl ToolRuntime {
                                     let key =
                                         params.get("key").and_then(|v| v.as_str()).unwrap_or("");
                                     let value = params.get("value").cloned().unwrap_or(Value::Null);
+                                    // Optional TTL in seconds (for caching)
+                                    let ttl = params.get("ttl").and_then(|v| v.as_u64());
                                     let handle = tokio::runtime::Handle::current();
-                                    match handle.block_on(mem.set(&tool_name, key, value)) {
+                                    match handle.block_on(mem.set_with_ttl(&tool_name, key, value, ttl)) {
                                         Ok(()) => serde_json::json!({"success": true}),
                                         Err(e) => serde_json::json!({"error": e.to_string()}),
                                     }
