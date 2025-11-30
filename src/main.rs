@@ -1999,33 +1999,15 @@ call_tool(tool_name: "my_tool", arguments: {...})
 
 ## 🧠 Memory (Persistent State)
 
-Tools can store and retrieve data that persists across sessions using libSQL/SQLite.
+Tools can store and retrieve data that persists across sessions using SQLite.
 
-### `memory_set` - Store a value
+### Using the `memory` tool
 ```
-memory_set(tool_name: "my_tool", key: "counter", value: 42)
-memory_set(tool_name: "my_tool", key: "config", value: {"theme": "dark"})
-```
-
-### `memory_get` - Retrieve a value
-```
-memory_get(tool_name: "my_tool", key: "counter")  // Returns: 42
-```
-
-### `memory_list` - List all keys for a tool
-```
-memory_list(tool_name: "my_tool")  // Returns: counter, config
-```
-
-### `memory_clear` - Clear memory
-```
-memory_clear(tool_name: "my_tool")  // Clear one tool's memory
-memory_clear()                       // Clear ALL memory
-```
-
-### `memory_stats` - Get statistics
-```
-memory_stats()  // Total entries, tools, schema version
+memory(action: "store", tool_name: "my_tool", key: "counter", value: 42)
+memory(action: "get", tool_name: "my_tool", key: "counter")  // Returns: 42
+memory(action: "list", tool_name: "my_tool")  // List all keys
+memory(action: "delete", tool_name: "my_tool", key: "counter")
+memory(action: "stats")  // Total entries, tools, size
 ```
 
 ---
@@ -2089,12 +2071,27 @@ memory_stats()  // Total entries, tools, schema version
 
 ---
 
+## 🔄 Progressive Loading (Agent Skills Pattern)
+
+Skillz supports progressive loading to minimize context usage:
+
+1. **Startup**: Only tool names + descriptions are loaded
+2. **On-demand**: Full schemas loaded via resources when needed
+
+### How it works:
+- `list_tools` → Quick overview (name + description only)
+- `skillz://tools/{name}` → Full schema, annotations, examples
+
+This mirrors Anthropic's Agent Skills architecture where metadata is loaded at startup but full content is loaded on-demand.
+
+---
+
 ## Resources
 
 - `skillz://guide` - This guide (updates with new tools!)
 - `skillz://examples` - Code examples for WASM and Script tools
 - `skillz://protocol` - JSON-RPC 2.0 protocol documentation
-- `skillz://tools/{name}` - Individual tool documentation
+- `skillz://tools/{name}` - **Full tool schema** (input/output, annotations, deps)
 "##,
         );
 
@@ -2526,40 +2523,130 @@ request = json.loads(sys.stdin.read())
     fn get_tool_info(&self, tool_name: &str) -> String {
         match self.registry.get_tool(tool_name) {
             Some(tool) => {
-                let (type_name, type_emoji, path_info) = match tool.tool_type() {
+                let (type_name, type_emoji, extra_info) = match tool.tool_type() {
                     ToolType::Wasm => (
                         "WASM",
                         "🦀",
-                        format!("Directory: {}", tool.tool_dir.display()),
+                        if !tool.manifest.wasm_dependencies.is_empty() {
+                            format!(
+                                "\n## Dependencies\n```\n{}\n```",
+                                tool.manifest.wasm_dependencies.join("\n")
+                            )
+                        } else {
+                            String::new()
+                        },
                     ),
                     ToolType::Script => {
                         let interp = tool.interpreter().unwrap_or("executable");
+                        let deps = if !tool.manifest.dependencies.is_empty() {
+                            format!(
+                                "\n## Dependencies\n```\n{}\n```",
+                                tool.manifest.dependencies.join("\n")
+                            )
+                        } else {
+                            String::new()
+                        };
                         (
                             "Script",
                             "📜",
-                            format!(
-                                "Directory: {}\nInterpreter: {}",
-                                tool.tool_dir.display(),
-                                interp
-                            ),
+                            format!("\n- **Interpreter:** {}{}", interp, deps),
                         )
                     }
-                    ToolType::Pipeline => (
-                        "Pipeline",
-                        "⛓️",
-                        format!(
-                            "Directory: {}\nSteps: {}",
-                            tool.tool_dir.display(),
-                            tool.pipeline_steps().len()
-                        ),
-                    ),
+                    ToolType::Pipeline => {
+                        let steps_info: Vec<String> = tool
+                            .pipeline_steps()
+                            .iter()
+                            .enumerate()
+                            .map(|(i, s)| {
+                                let default_name = format!("step_{}", i + 1);
+                                let name = s.name.as_deref().unwrap_or(&default_name);
+                                format!("{}. `{}` → {}", i + 1, name, s.tool)
+                            })
+                            .collect();
+                        (
+                            "Pipeline",
+                            "⛓️",
+                            format!("\n## Steps\n{}", steps_info.join("\n")),
+                        )
+                    }
                 };
-                let version_info = format!("- **Version:** {}\n", tool.manifest.version);
+
+                // Build input schema section
+                let input_schema = serde_json::to_string_pretty(&tool.manifest.input_schema)
+                    .unwrap_or_else(|_| "{}".to_string());
+
+                // Build output schema section if present
+                let output_schema_section = tool
+                    .manifest
+                    .output_schema
+                    .as_ref()
+                    .map(|s| {
+                        format!(
+                            "\n## Output Schema\n```json\n{}\n```",
+                            serde_json::to_string_pretty(s).unwrap_or_else(|_| "{}".to_string())
+                        )
+                    })
+                    .unwrap_or_default();
+
+                // Build annotations section if present
+                let annotations_section = tool
+                    .manifest
+                    .annotations
+                    .as_ref()
+                    .map(|a| {
+                        let mut hints = Vec::new();
+                        if a.read_only_hint == Some(true) {
+                            hints.push("📖 Read-only");
+                        }
+                        if a.destructive_hint == Some(true) {
+                            hints.push("⚠️ Destructive");
+                        }
+                        if a.idempotent_hint == Some(true) {
+                            hints.push("🔁 Idempotent");
+                        }
+                        if a.open_world_hint == Some(true) {
+                            hints.push("🌍 External access");
+                        }
+                        if hints.is_empty() {
+                            String::new()
+                        } else {
+                            format!("\n## Annotations\n{}", hints.join(" | "))
+                        }
+                    })
+                    .unwrap_or_default();
+
                 format!(
-                    "# {} {} Tool: {}\n\n## Description\n{}\n\n## Details\n- **Type:** {}\n- **Name:** {}\n{}- {}\n- **Status:** ✅ Ready to use\n\n## Usage\n```\ncall_tool(tool_name: \"{}\")\n```\n",
-                    type_emoji, type_name, tool.name(),
+                    r#"# {} {} Tool: {}
+
+## Description
+{}
+
+## Details
+- **Type:** {}
+- **Version:** {}
+- **Status:** ✅ Ready to use
+{}{}
+## Input Schema
+```json
+{}
+```{}
+## Usage
+```
+call_tool(tool_name: "{}", arguments: {{}})
+```
+
+> 💡 This resource provides full schema for progressive loading. Use `list_tools` for a quick overview.
+"#,
+                    type_emoji,
+                    type_name,
+                    tool.name(),
                     tool.description(),
-                    type_name, tool.name(), version_info, path_info,
+                    type_name,
+                    tool.manifest.version,
+                    extra_info,
+                    annotations_section,
+                    input_schema,
+                    output_schema_section,
                     tool.name()
                 )
             }
