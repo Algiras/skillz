@@ -4,7 +4,6 @@ mod memory;
 mod pipeline;
 mod registry;
 mod runtime;
-mod templates;
 mod watcher;
 
 use anyhow::Result;
@@ -90,7 +89,6 @@ struct AppState {
     registry: registry::ToolRegistry,
     runtime: runtime::ToolRuntime,
     memory: memory::Memory,
-    template_registry: templates::TemplateRegistry,
     tool_router: ToolRouter<Self>,
     /// Shared peer for sending logging notifications
     peer: SharedPeer,
@@ -184,73 +182,6 @@ struct VersionArgs {
 
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-enum TemplateAction {
-    #[serde(rename = "list")]
-    List,
-    #[serde(rename = "info")]
-    Info,
-    #[serde(rename = "use")]
-    Use,
-    #[serde(rename = "create")]
-    Create,
-    #[serde(rename = "delete")]
-    Delete,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-struct TemplateArgs {
-    /// Action: 'list', 'info', 'use', 'create', 'delete'
-    action: TemplateAction,
-    /// Template name (for 'info', 'use', 'delete')
-    name: Option<String>,
-    /// Category filter (for 'list'): api, data, file, utility, integration, custom
-    category: Option<String>,
-    /// Variables to substitute in template (for 'use')
-    /// Must include 'tool_name' at minimum
-    variables: Option<std::collections::HashMap<String, String>>,
-    /// Template definition (for 'create')
-    template: Option<TemplateDefinition>,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-struct TemplateDefinition {
-    /// Template description
-    description: String,
-    /// Category: api, data, file, utility, integration, custom
-    category: Option<String>,
-    /// Tool type: python, node, wasm, pipeline
-    tool_type: String,
-    /// Template variables with descriptions
-    variables: Vec<TemplateVariableArg>,
-    /// The template code with {{variable}} placeholders
-    code: String,
-    /// Dependencies (pip packages for Python, npm for Node, crates for WASM)
-    #[serde(default)]
-    dependencies: Vec<String>,
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-struct TemplateVariableArg {
-    /// Variable name (used as {{name}} in template)
-    name: String,
-    /// Description of what this variable is for
-    description: String,
-    /// Default value if not provided
-    default: Option<String>,
-    /// Whether this variable is required
-    #[serde(default = "default_true")]
-    required: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Deserialize, Serialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
 struct CallToolArgs {
     tool_name: String,
     arguments: Option<serde_json::Value>,
@@ -338,10 +269,8 @@ impl AppState {
         registry: registry::ToolRegistry,
         mut runtime: runtime::ToolRuntime,
         memory: memory::Memory,
-        storage_dir: std::path::PathBuf,
     ) -> Self {
         let peer: SharedPeer = Arc::new(RwLock::new(None));
-        let templates_dir = storage_dir.join("templates");
 
         // Set up logging handler that forwards to MCP peer
         let peer_for_logging = peer.clone();
@@ -463,18 +392,82 @@ impl AppState {
             })
         });
 
+        // Set up resource handlers - allow tools to list and read Skillz's resources
+        let registry_for_list = registry.clone();
+        let resource_list_handler: runtime::ResourceListHandler = Arc::new(move || {
+            let reg = registry_for_list.clone();
+            Box::pin(async move {
+                let mut resources = vec![
+                    runtime::ResourceInfo {
+                        uri: "skillz://guide".to_string(),
+                        name: "Skillz Guide".to_string(),
+                        description: Some("Complete usage guide for Skillz".to_string()),
+                        mime_type: Some("text/markdown".to_string()),
+                    },
+                    runtime::ResourceInfo {
+                        uri: "skillz://examples".to_string(),
+                        name: "Skillz Examples".to_string(),
+                        description: Some("Code snippets for WASM and Script tools".to_string()),
+                        mime_type: Some("text/markdown".to_string()),
+                    },
+                    runtime::ResourceInfo {
+                        uri: "skillz://protocol".to_string(),
+                        name: "JSON-RPC 2.0 Protocol".to_string(),
+                        description: Some("How script tools communicate".to_string()),
+                        mime_type: Some("text/markdown".to_string()),
+                    },
+                ];
+
+                // Add dynamic resources for each built tool
+                for tool in reg.list_tools() {
+                    resources.push(runtime::ResourceInfo {
+                        uri: format!("skillz://tools/{}", tool.name()),
+                        name: tool.name().to_string(),
+                        description: Some(tool.description().to_string()),
+                        mime_type: Some("text/markdown".to_string()),
+                    });
+                }
+
+                Ok(resources)
+            })
+        });
+
+        let registry_for_read = registry.clone();
+        let resource_read_handler: runtime::ResourceReadHandler = Arc::new(move |uri| {
+            let reg = registry_for_read.clone();
+            Box::pin(async move {
+                let content = match uri.as_str() {
+                    "skillz://guide" => get_guide_content_static(),
+                    "skillz://examples" => get_examples_content_static(),
+                    "skillz://protocol" => get_protocol_content_static(),
+                    _ if uri.starts_with("skillz://tools/") => {
+                        let tool_name = uri.strip_prefix("skillz://tools/").unwrap();
+                        get_tool_info_static(&reg, tool_name)
+                    }
+                    _ => return Err(anyhow::anyhow!("Resource not found: {}", uri)),
+                };
+
+                Ok(runtime::ResourceContent {
+                    uri: uri.clone(),
+                    mime_type: Some("text/markdown".to_string()),
+                    text: Some(content),
+                    blob: None,
+                })
+            })
+        });
+
         // Configure runtime with handlers
         runtime = runtime
             .with_logging_handler(logging_handler)
             .with_progress_handler(progress_handler)
             .with_elicitation_handler(elicitation_handler)
-            .with_sampling_handler(sampling_handler);
+            .with_sampling_handler(sampling_handler)
+            .with_resource_handlers(resource_list_handler, resource_read_handler);
 
         Self {
             registry,
             runtime,
             memory,
-            template_registry: templates::TemplateRegistry::new(templates_dir),
             tool_router: Self::tool_router(),
             peer,
             client_caps: Arc::new(RwLock::new(McpClientCapabilities::default())),
@@ -508,7 +501,7 @@ impl AppState {
     )]
     async fn build_tool(&self, Parameters(args): Parameters<BuildToolArgs>) -> String {
         eprintln!("Building WASM tool: {}", args.name);
-
+        
         // Check if tool exists
         if self.registry.get_tool(&args.name).is_some() && !args.overwrite.unwrap_or(false) {
             return format!(
@@ -528,9 +521,9 @@ impl AppState {
                     Ok(bytes) => bytes,
                     Err(e) => return format!("Error reading compiled WASM: {}", e),
                 },
-                Err(e) => return format!("Compilation error: {}", e),
-            };
-
+            Err(e) => return format!("Compilation error: {}", e),
+        };
+        
         // Build manifest
         let mut manifest = registry::ToolManifest::new(
             args.name.clone(),
@@ -750,341 +743,6 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
         }
     }
 
-    // ==================== TEMPLATES ====================
-
-    #[tool(
-        description = "Use and create templates to quickly build tools. Templates are shareable and stored on disk.
-
-Actions: 'list' (show templates), 'info' (template details), 'use' (create tool), 'create' (new template), 'delete' (remove custom template)
-
-Categories: api, data, file, utility, integration, custom
-
-Example use: template(action: \"use\", name: \"api_client\", variables: {\"tool_name\": \"my_api\", \"base_url\": \"https://api.github.com\"})"
-    )]
-    async fn template(&self, Parameters(args): Parameters<TemplateArgs>) -> String {
-        match args.action {
-            TemplateAction::List => {
-                let templates = if let Some(cat_str) = args.category {
-                    let category = match cat_str.to_lowercase().as_str() {
-                        "api" => templates::TemplateCategory::Api,
-                        "data" => templates::TemplateCategory::Data,
-                        "file" => templates::TemplateCategory::File,
-                        "utility" => templates::TemplateCategory::Utility,
-                        "integration" => templates::TemplateCategory::Integration,
-                        "custom" => templates::TemplateCategory::Custom,
-                        _ => return format!("Unknown category: {}. Use: api, data, file, utility, integration, custom", cat_str),
-                    };
-                    self.template_registry.list_by_category(&category)
-                } else {
-                    self.template_registry.list()
-                };
-
-                if templates.is_empty() {
-                    return "No templates found.".to_string();
-                }
-
-                let mut output = format!("## 📋 Available Templates ({})\n\n", templates.len());
-                for t in templates {
-                    output.push_str(&format!(
-                        "### `{}`\n- **Description:** {}\n- **Category:** {:?}\n- **Type:** {:?}\n- **Variables:** {}\n\n",
-                        t.name,
-                        t.description,
-                        t.category,
-                        t.tool_type,
-                        t.variable_names().join(", ")
-                    ));
-                }
-                output.push_str("\n💡 Use `template(action: \"info\", name: \"...\")` for details");
-                output
-            }
-            TemplateAction::Info => {
-                let name = match args.name {
-                    Some(n) => n,
-                    None => return "❌ name is required for 'info' action".to_string(),
-                };
-
-                match self.template_registry.get(&name) {
-                    Some(t) => {
-                        let mut output = format!("## 📄 Template: `{}`\n\n", t.name);
-                        output.push_str(&format!("**Description:** {}\n\n", t.description));
-                        output.push_str(&format!("**Category:** {:?}\n", t.category));
-                        output.push_str(&format!("**Creates:** {:?} tool\n\n", t.tool_type));
-
-                        output.push_str("### Variables\n\n");
-                        for var in &t.variables {
-                            let required = if var.required { " *(required)*" } else { "" };
-                            let default = var
-                                .default
-                                .as_ref()
-                                .map(|d| format!(" (default: `{}`)", d))
-                                .unwrap_or_default();
-                            output.push_str(&format!(
-                                "- `{}`: {}{}{}\n",
-                                var.name, var.description, required, default
-                            ));
-                        }
-
-                        if !t.dependencies.is_empty() {
-                            output.push_str(&format!(
-                                "\n### Dependencies\n{}\n",
-                                t.dependencies.join(", ")
-                            ));
-                        }
-
-                        if let Some(ref example) = t.example {
-                            output.push_str(&format!("\n### Example\n```\n{}\n```\n", example));
-                        }
-
-                        output
-                    }
-                    None => format!("❌ Template '{}' not found", name),
-                }
-            }
-            TemplateAction::Use => {
-                let name = match args.name {
-                    Some(n) => n,
-                    None => return "❌ name is required for 'use' action".to_string(),
-                };
-
-                let vars = match args.variables {
-                    Some(v) => v,
-                    None => return "❌ variables is required for 'use' action. Must include at least 'tool_name'.".to_string(),
-                };
-
-                let tool_name = match vars.get("tool_name") {
-                    Some(n) => n.clone(),
-                    None => return "❌ variables must include 'tool_name'".to_string(),
-                };
-
-                // Check if tool already exists
-                if self.registry.get_tool(&tool_name).is_some() {
-                    return format!(
-                        "❌ Tool '{}' already exists. Choose a different name.",
-                        tool_name
-                    );
-                }
-
-                let template = match self.template_registry.get(&name) {
-                    Some(t) => t.clone(),
-                    None => return format!("❌ Template '{}' not found", name),
-                };
-
-                // Render the template
-                let code = match template.render(&vars) {
-                    Ok(c) => c,
-                    Err(e) => return format!("❌ Template error: {}", e),
-                };
-
-                // Create the tool based on template type
-                match template.tool_type {
-                    templates::TemplateToolType::Python => {
-                        let mut manifest = registry::ToolManifest::new(
-                            tool_name.clone(),
-                            vars.get("description")
-                                .cloned()
-                                .unwrap_or(template.description.clone()),
-                            ToolType::Script,
-                        );
-                        manifest.interpreter = Some("python3".to_string());
-                        manifest.dependencies = template.dependencies.clone();
-
-                        match self.registry.register_tool(manifest, code.as_bytes()) {
-                            Ok(_) => {
-                                let deps_msg = if !template.dependencies.is_empty() {
-                                    format!("\n\n⚠️ Run `call_tool(tool_name: \"{}\")` once to install dependencies: {}", 
-                                        tool_name, template.dependencies.join(", "))
-                                } else {
-                                    String::new()
-                                };
-                                format!("✅ Created Python tool '{}' from template '{}'!{}\n\nUse: `call_tool(tool_name: \"{}\")`", 
-                                    tool_name, name, deps_msg, tool_name)
-                            }
-                            Err(e) => format!("❌ Failed to create tool: {}", e),
-                        }
-                    }
-                    templates::TemplateToolType::Node => {
-                        let mut manifest = registry::ToolManifest::new(
-                            tool_name.clone(),
-                            vars.get("description")
-                                .cloned()
-                                .unwrap_or(template.description.clone()),
-                            ToolType::Script,
-                        );
-                        manifest.interpreter = Some("node".to_string());
-                        manifest.dependencies = template.dependencies.clone();
-
-                        match self.registry.register_tool(manifest, code.as_bytes()) {
-                            Ok(_) => format!("✅ Created Node.js tool '{}' from template '{}'!\n\nUse: `call_tool(tool_name: \"{}\")`", 
-                                tool_name, name, tool_name),
-                            Err(e) => format!("❌ Failed to create tool: {}", e),
-                        }
-                    }
-                    templates::TemplateToolType::Wasm => {
-                        // For WASM, we need to compile the code
-                        let deps_strings = template.dependencies.clone();
-                        let wasm_deps = builder::Builder::parse_dependencies(&deps_strings);
-                        let wasm_bytes = match builder::Builder::compile_tool_with_deps(
-                            &tool_name, &code, &wasm_deps,
-                        ) {
-                            Ok(path) => match std::fs::read(&path) {
-                                Ok(bytes) => bytes,
-                                Err(e) => return format!("❌ Failed to read compiled WASM: {}", e),
-                            },
-                            Err(e) => return format!("❌ Compilation error: {}", e),
-                        };
-
-                        let mut manifest = registry::ToolManifest::new(
-                            tool_name.clone(),
-                            vars.get("description")
-                                .cloned()
-                                .unwrap_or(template.description.clone()),
-                            ToolType::Wasm,
-                        );
-                        manifest.wasm_dependencies = deps_strings;
-
-                        match self.registry.register_wasm_tool(manifest, &wasm_bytes, &code) {
-                            Ok(_) => format!("✅ Created WASM tool '{}' from template '{}'!\n\nUse: `call_tool(tool_name: \"{}\")`", 
-                                tool_name, name, tool_name),
-                            Err(e) => format!("❌ Failed to create tool: {}", e),
-                        }
-                    }
-                    templates::TemplateToolType::Pipeline => {
-                        // For pipelines, parse the JSON and create the pipeline
-                        let pipeline_def: serde_json::Value = match serde_json::from_str(&code) {
-                            Ok(v) => v,
-                            Err(e) => return format!("❌ Invalid pipeline JSON: {}", e),
-                        };
-
-                        let steps_value = pipeline_def
-                            .get("steps")
-                            .cloned()
-                            .unwrap_or(serde_json::json!([]));
-                        let steps: Vec<registry::PipelineStep> =
-                            match serde_json::from_value(steps_value) {
-                                Ok(s) => s,
-                                Err(e) => return format!("❌ Invalid pipeline steps: {}", e),
-                            };
-
-                        let description = pipeline_def
-                            .get("description")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(&template.description)
-                            .to_string();
-
-                        let manifest = registry::ToolManifest::new_pipeline(
-                            tool_name.clone(),
-                            description,
-                            steps,
-                        );
-
-                        match self.registry.register_tool(manifest, &[]) {
-                            Ok(_) => format!("✅ Created Pipeline '{}' from template '{}'!\n\nUse: `call_tool(tool_name: \"{}\")`", 
-                                tool_name, name, tool_name),
-                            Err(e) => format!("❌ Failed to create pipeline: {}", e),
-                        }
-                    }
-                }
-            }
-            TemplateAction::Create => {
-                let name = match args.name {
-                    Some(n) => n,
-                    None => return "❌ name is required for 'create' action".to_string(),
-                };
-
-                let def = match args.template {
-                    Some(d) => d,
-                    None => {
-                        return "❌ template definition is required for 'create' action".to_string()
-                    }
-                };
-
-                // Check if template already exists (and is not builtin)
-                if self.template_registry.get(&name).is_some()
-                    && self.template_registry.is_builtin(&name)
-                {
-                    return format!("❌ Cannot overwrite builtin template '{}'", name);
-                }
-
-                // Parse category
-                let category = match def.category.as_deref().unwrap_or("custom") {
-                    "api" => templates::TemplateCategory::Api,
-                    "data" => templates::TemplateCategory::Data,
-                    "file" => templates::TemplateCategory::File,
-                    "utility" => templates::TemplateCategory::Utility,
-                    "integration" => templates::TemplateCategory::Integration,
-                    _ => templates::TemplateCategory::Custom,
-                };
-
-                // Parse tool type
-                let tool_type = match def.tool_type.to_lowercase().as_str() {
-                    "python" | "python3" => templates::TemplateToolType::Python,
-                    "node" | "nodejs" | "javascript" => templates::TemplateToolType::Node,
-                    "wasm" | "rust" => templates::TemplateToolType::Wasm,
-                    "pipeline" => templates::TemplateToolType::Pipeline,
-                    _ => {
-                        return format!(
-                            "❌ Unknown tool_type: {}. Use: python, node, wasm, pipeline",
-                            def.tool_type
-                        )
-                    }
-                };
-
-                // Build the template
-                let template = templates::Template {
-                    name: name.clone(),
-                    description: def.description,
-                    category,
-                    tool_type,
-                    variables: def
-                        .variables
-                        .into_iter()
-                        .map(|v| templates::TemplateVariable {
-                            name: v.name,
-                            description: v.description,
-                            default: v.default,
-                            required: v.required,
-                        })
-                        .collect(),
-                    code: def.code,
-                    dependencies: def.dependencies,
-                    example: None,
-                };
-
-                // Save to filesystem
-                match self.template_registry.clone().create(template) {
-                    Ok(_) => format!(
-                        "✅ Created template '{}'!\n\n\
-                        📁 Saved to: {}\n\n\
-                        Use it with:\n\
-                        ```\n\
-                        template(action: \"use\", name: \"{}\", variables: {{\"tool_name\": \"my_tool\", ...}})\n\
-                        ```",
-                        name,
-                        self.template_registry.templates_dir().join(format!("{}.json", name)).display(),
-                        name
-                    ),
-                    Err(e) => format!("❌ Failed to create template: {}", e),
-                }
-            }
-            TemplateAction::Delete => {
-                let name = match args.name {
-                    Some(n) => n,
-                    None => return "❌ name is required for 'delete' action".to_string(),
-                };
-
-                if self.template_registry.is_builtin(&name) {
-                    return format!("❌ Cannot delete builtin template '{}'. Only custom templates can be deleted.", name);
-                }
-
-                match self.template_registry.clone().delete(&name) {
-                    Ok(true) => format!("🗑️ Template '{}' deleted successfully", name),
-                    Ok(false) => format!("⚠️ Template '{}' not found", name),
-                    Err(e) => format!("❌ Failed to delete template: {}", e),
-                }
-            }
-        }
-    }
-
     // ==================== TOOL EXECUTION ====================
 
     #[tool(
@@ -1093,12 +751,12 @@ Example use: template(action: \"use\", name: \"api_client\", variables: {\"tool_
     #[doc = "NOTE: This tool can ONLY call tools registered within Skillz, not tools from other MCP servers."]
     async fn call_tool(&self, Parameters(args): Parameters<CallToolArgs>) -> String {
         eprintln!("Calling tool: {}", args.tool_name);
-
+        
         let tool = match self.registry.get_tool(&args.tool_name) {
             Some(t) => t,
             None => return format!("Error: Tool '{}' not found", args.tool_name),
         };
-
+        
         let tool_args = args.arguments.unwrap_or(serde_json::json!({}));
 
         // Handle pipeline tools specially
@@ -1114,7 +772,8 @@ Example use: template(action: \"use\", name: \"api_client\", variables: {\"tool_
         runtime.update_capabilities(runtime::ClientCapabilities {
             sampling: mcp_caps.sampling,
             elicitation: mcp_caps.elicitation,
-            memory: true, // Memory is always available (server-side)
+            memory: true,    // Memory is always available (server-side)
+            resources: true, // Resources are always available (server-side)
         });
 
         // Use spawn_blocking for sync operations
@@ -1258,7 +917,7 @@ Example use: template(action: \"use\", name: \"api_client\", variables: {\"tool_
             tool.name(),
             if pipeline_success {
                 "Completed"
-            } else {
+        } else {
                 "Failed"
             },
             total_duration_ms
@@ -1419,7 +1078,7 @@ Example use: template(action: \"use\", name: \"api_client\", variables: {\"tool_
                 if result.status.success() {
                     if stderr.is_empty() {
                         format!("✅ **Execution Result**\n\n```\n{}\n```", stdout.trim())
-                    } else {
+        } else {
                         format!(
                             "✅ **Execution Result**\n\n```\n{}\n```\n\n**Logs:**\n```\n{}\n```",
                             stdout.trim(),
@@ -1595,7 +1254,7 @@ pipeline(action: "create", name: "my_pipeline", steps: [
                         .into_iter()
                         .filter(|p| p.manifest.tags.contains(tag))
                         .collect()
-                } else {
+        } else {
                     pipelines
                 };
 
@@ -1714,8 +1373,8 @@ pipeline(action: "create", name: "my_pipeline", steps: [
             "stats" => {
                 match self.memory.stats().await {
                     Ok(stats) => format!(
-                        "📊 Memory Stats:\n  - Total entries: {}\n  - Tools with memory: {}\n  - Total size: {} bytes ({:.2} KB)",
-                        stats.total_entries, stats.total_tools, stats.total_size_bytes, stats.total_size_bytes as f64 / 1024.0
+                        "📊 Memory Stats:\n  - Total entries: {}\n  - Tools with memory: {}\n  - Schema version: {}",
+                        stats.total_entries, stats.total_tools, stats.schema_version
                     ),
                     Err(e) => format!("Error: {}", e),
                 }
@@ -1999,15 +1658,33 @@ call_tool(tool_name: "my_tool", arguments: {...})
 
 ## 🧠 Memory (Persistent State)
 
-Tools can store and retrieve data that persists across sessions using SQLite.
+Tools can store and retrieve data that persists across sessions using libSQL/SQLite.
 
-### Using the `memory` tool
+### `memory_set` - Store a value
 ```
-memory(action: "store", tool_name: "my_tool", key: "counter", value: 42)
-memory(action: "get", tool_name: "my_tool", key: "counter")  // Returns: 42
-memory(action: "list", tool_name: "my_tool")  // List all keys
-memory(action: "delete", tool_name: "my_tool", key: "counter")
-memory(action: "stats")  // Total entries, tools, size
+memory_set(tool_name: "my_tool", key: "counter", value: 42)
+memory_set(tool_name: "my_tool", key: "config", value: {"theme": "dark"})
+```
+
+### `memory_get` - Retrieve a value
+```
+memory_get(tool_name: "my_tool", key: "counter")  // Returns: 42
+```
+
+### `memory_list` - List all keys for a tool
+```
+memory_list(tool_name: "my_tool")  // Returns: counter, config
+```
+
+### `memory_clear` - Clear memory
+```
+memory_clear(tool_name: "my_tool")  // Clear one tool's memory
+memory_clear()                       // Clear ALL memory
+```
+
+### `memory_stats` - Get statistics
+```
+memory_stats()  // Total entries, tools, schema version
 ```
 
 ---
@@ -2071,27 +1748,12 @@ memory(action: "stats")  // Total entries, tools, size
 
 ---
 
-## 🔄 Progressive Loading (Agent Skills Pattern)
-
-Skillz supports progressive loading to minimize context usage:
-
-1. **Startup**: Only tool names + descriptions are loaded
-2. **On-demand**: Full schemas loaded via resources when needed
-
-### How it works:
-- `list_tools` → Quick overview (name + description only)
-- `skillz://tools/{name}` → Full schema, annotations, examples
-
-This mirrors Anthropic's Agent Skills architecture where metadata is loaded at startup but full content is loaded on-demand.
-
----
-
 ## Resources
 
 - `skillz://guide` - This guide (updates with new tools!)
 - `skillz://examples` - Code examples for WASM and Script tools
 - `skillz://protocol` - JSON-RPC 2.0 protocol documentation
-- `skillz://tools/{name}` - **Full tool schema** (input/output, annotations, deps)
+- `skillz://tools/{name}` - Individual tool documentation
 "##,
         );
 
@@ -2219,6 +1881,8 @@ Script tools communicate via JSON-RPC 2.0 over stdin/stdout, similar to MCP serv
 - 📝 **Logging** - Emit log messages during execution
 - 📊 **Progress** - Report progress updates
 - 🔧 **Context** - Environment and tool information
+- 🧠 **Memory** - Store/retrieve persistent data
+- 📦 **Resources** - List and read server resources
 - 🎤 **Elicitation** - Request user input (if client supports)
 - 🤖 **Sampling** - Request LLM completions (if client supports)
 
@@ -2244,7 +1908,9 @@ When Skillz calls your tool, it sends:
             "environment": {"HOME": "...", "USER": "...", "PATH": "..."},
             "capabilities": {
                 "sampling": true,
-                "elicitation": true
+                "elicitation": true,
+                "memory": true,
+                "resources": true
             }
         }
     },
@@ -2348,6 +2014,66 @@ def memory_set(key, value):
     print(json.dumps(req), flush=True)
     resp = json.loads(sys.stdin.readline())
     return resp.get("result", {}).get("success", False)
+```
+
+---
+
+## 📦 Resources (List and Read Server Resources)
+
+Access Skillz resources from your script tool.
+**Check `context.capabilities.resources` before using!**
+
+### List Available Resources
+```json
+{"jsonrpc": "2.0", "method": "resources/list", "params": {}, "id": 20}
+```
+**Response:**
+```json
+{
+    "jsonrpc": "2.0",
+    "result": {
+        "resources": [
+            {"uri": "skillz://guide", "name": "Skillz Guide", "description": "Complete usage guide"},
+            {"uri": "skillz://examples", "name": "Skillz Examples", "description": "Code snippets"},
+            {"uri": "skillz://protocol", "name": "JSON-RPC 2.0 Protocol", "description": "How to communicate"},
+            {"uri": "skillz://tools/my_tool", "name": "my_tool", "description": "Tool description"}
+        ]
+    },
+    "id": 20
+}
+```
+
+### Read Resource Content
+```json
+{"jsonrpc": "2.0", "method": "resources/read", "params": {"uri": "skillz://guide"}, "id": 21}
+```
+**Response:**
+```json
+{
+    "jsonrpc": "2.0",
+    "result": {
+        "contents": [
+            {"uri": "skillz://guide", "mime_type": "text/markdown", "text": "# 🚀 Skillz Guide..."}
+        ]
+    },
+    "id": 21
+}
+```
+
+### Python Helper Functions
+```python
+def resources_list():
+    req = {"jsonrpc": "2.0", "method": "resources/list", "params": {}, "id": 20}
+    print(json.dumps(req), flush=True)
+    resp = json.loads(sys.stdin.readline())
+    return resp.get("result", {}).get("resources", [])
+
+def resources_read(uri):
+    req = {"jsonrpc": "2.0", "method": "resources/read", "params": {"uri": uri}, "id": 21}
+    print(json.dumps(req), flush=True)
+    resp = json.loads(sys.stdin.readline())
+    contents = resp.get("result", {}).get("contents", [])
+    return contents[0].get("text") if contents else None
 ```
 
 ---
@@ -2457,6 +2183,21 @@ def log(level, message):
     print(json.dumps({"jsonrpc": "2.0", "method": "log", 
         "params": {"level": level, "message": message}}), flush=True)
 
+def resources_list():
+    """List available resources"""
+    req = {"jsonrpc": "2.0", "method": "resources/list", "params": {}, "id": 20}
+    print(json.dumps(req), flush=True)
+    resp = json.loads(sys.stdin.readline())
+    return resp.get("result", {}).get("resources", [])
+
+def resources_read(uri):
+    """Read resource content"""
+    req = {"jsonrpc": "2.0", "method": "resources/read", "params": {"uri": uri}, "id": 21}
+    print(json.dumps(req), flush=True)
+    resp = json.loads(sys.stdin.readline())
+    contents = resp.get("result", {}).get("contents", [])
+    return contents[0].get("text") if contents else None
+
 def elicit(message, schema):
     """Request user input (check capabilities first!)"""
     req = {"jsonrpc": "2.0", "method": "elicitation/create", 
@@ -2478,17 +2219,22 @@ def main():
     context = request.get("params", {}).get("context", {})
     caps = context.get("capabilities", {})
     
-    log("info", f"Roots: {context.get('roots', [])}")
-    log("info", f"Elicitation: {caps.get('elicitation', False)}, Sampling: {caps.get('sampling', False)}")
+    log("info", f"Capabilities: {caps}")
+    
+    # Example: List and read resources (always available)
+    if caps.get("resources"):
+        resources = resources_list()
+        log("info", f"Available resources: {len(resources)}")
+        # guide = resources_read("skillz://guide")
     
     # Example: Request user input if supported
     if caps.get("elicitation"):
-        log("info", "Requesting user input...")
+        log("info", "Elicitation available!")
         # resp = elicit("What's your name?", {"type": "object", "properties": {"name": {"type": "string"}}})
     
     # Example: Request LLM completion if supported  
     if caps.get("sampling"):
-        log("info", "LLM sampling available!")
+        log("info", "Sampling available!")
         # resp = sample("Hello, how are you?")
     
     result = {"message": "Done!", "capabilities_available": caps}
@@ -2512,9 +2258,11 @@ request = json.loads(sys.stdin.read())
 ```
 
 ### Other Tips
-- Check `context.capabilities` before using elicitation/sampling
+- Check `context.capabilities` before using features
+- `memory` and `resources` are always available (server-side)
+- `elicitation` and `sampling` depend on MCP client support
 - Use `flush=True` to ensure output is sent immediately
-- Elicitation/sampling are bidirectional - script sends request, waits for response
+- All bidirectional methods require an `id` field for responses
 - Log to stderr for debug output that won't interfere with JSON-RPC
 - Always include `id` from original request in final response
 "##.to_string()
@@ -2523,130 +2271,40 @@ request = json.loads(sys.stdin.read())
     fn get_tool_info(&self, tool_name: &str) -> String {
         match self.registry.get_tool(tool_name) {
             Some(tool) => {
-                let (type_name, type_emoji, extra_info) = match tool.tool_type() {
+                let (type_name, type_emoji, path_info) = match tool.tool_type() {
                     ToolType::Wasm => (
                         "WASM",
                         "🦀",
-                        if !tool.manifest.wasm_dependencies.is_empty() {
-                            format!(
-                                "\n## Dependencies\n```\n{}\n```",
-                                tool.manifest.wasm_dependencies.join("\n")
-                            )
-                        } else {
-                            String::new()
-                        },
+                        format!("Directory: {}", tool.tool_dir.display()),
                     ),
                     ToolType::Script => {
                         let interp = tool.interpreter().unwrap_or("executable");
-                        let deps = if !tool.manifest.dependencies.is_empty() {
-                            format!(
-                                "\n## Dependencies\n```\n{}\n```",
-                                tool.manifest.dependencies.join("\n")
-                            )
-                        } else {
-                            String::new()
-                        };
                         (
                             "Script",
                             "📜",
-                            format!("\n- **Interpreter:** {}{}", interp, deps),
+                            format!(
+                                "Directory: {}\nInterpreter: {}",
+                                tool.tool_dir.display(),
+                                interp
+                            ),
                         )
                     }
-                    ToolType::Pipeline => {
-                        let steps_info: Vec<String> = tool
-                            .pipeline_steps()
-                            .iter()
-                            .enumerate()
-                            .map(|(i, s)| {
-                                let default_name = format!("step_{}", i + 1);
-                                let name = s.name.as_deref().unwrap_or(&default_name);
-                                format!("{}. `{}` → {}", i + 1, name, s.tool)
-                            })
-                            .collect();
-                        (
-                            "Pipeline",
-                            "⛓️",
-                            format!("\n## Steps\n{}", steps_info.join("\n")),
-                        )
-                    }
-                };
-
-                // Build input schema section
-                let input_schema = serde_json::to_string_pretty(&tool.manifest.input_schema)
-                    .unwrap_or_else(|_| "{}".to_string());
-
-                // Build output schema section if present
-                let output_schema_section = tool
-                    .manifest
-                    .output_schema
-                    .as_ref()
-                    .map(|s| {
+                    ToolType::Pipeline => (
+                        "Pipeline",
+                        "⛓️",
                         format!(
-                            "\n## Output Schema\n```json\n{}\n```",
-                            serde_json::to_string_pretty(s).unwrap_or_else(|_| "{}".to_string())
-                        )
-                    })
-                    .unwrap_or_default();
-
-                // Build annotations section if present
-                let annotations_section = tool
-                    .manifest
-                    .annotations
-                    .as_ref()
-                    .map(|a| {
-                        let mut hints = Vec::new();
-                        if a.read_only_hint == Some(true) {
-                            hints.push("📖 Read-only");
-                        }
-                        if a.destructive_hint == Some(true) {
-                            hints.push("⚠️ Destructive");
-                        }
-                        if a.idempotent_hint == Some(true) {
-                            hints.push("🔁 Idempotent");
-                        }
-                        if a.open_world_hint == Some(true) {
-                            hints.push("🌍 External access");
-                        }
-                        if hints.is_empty() {
-                            String::new()
-                        } else {
-                            format!("\n## Annotations\n{}", hints.join(" | "))
-                        }
-                    })
-                    .unwrap_or_default();
-
+                            "Directory: {}\nSteps: {}",
+                            tool.tool_dir.display(),
+                            tool.pipeline_steps().len()
+                        ),
+                    ),
+                };
+                let version_info = format!("- **Version:** {}\n", tool.manifest.version);
                 format!(
-                    r#"# {} {} Tool: {}
-
-## Description
-{}
-
-## Details
-- **Type:** {}
-- **Version:** {}
-- **Status:** ✅ Ready to use
-{}{}
-## Input Schema
-```json
-{}
-```{}
-## Usage
-```
-call_tool(tool_name: "{}", arguments: {{}})
-```
-
-> 💡 This resource provides full schema for progressive loading. Use `list_tools` for a quick overview.
-"#,
-                    type_emoji,
-                    type_name,
-                    tool.name(),
+                    "# {} {} Tool: {}\n\n## Description\n{}\n\n## Details\n- **Type:** {}\n- **Name:** {}\n{}- {}\n- **Status:** ✅ Ready to use\n\n## Usage\n```\ncall_tool(tool_name: \"{}\")\n```\n",
+                    type_emoji, type_name, tool.name(),
                     tool.description(),
-                    type_name,
-                    tool.manifest.version,
-                    extra_info,
-                    annotations_section,
-                    input_schema,
-                    output_schema_section,
+                    type_name, tool.name(), version_info, path_info,
                     tool.name()
                 )
             }
@@ -2658,16 +2316,234 @@ call_tool(tool_name: "{}", arguments: {{}})
     }
 }
 
+// ==================== Static Resource Content Helpers ====================
+// These functions provide resource content without needing &self reference
+// Used by resource handlers passed to the runtime
+
+fn get_guide_content_static() -> String {
+    r##"# 🚀 Skillz Guide
+
+## Overview
+Skillz is a self-extending MCP server that allows you to build and execute custom tools at runtime.
+
+**Two types of tools:**
+- 🦀 **WASM Tools** - Compiled from Rust, run in a WebAssembly sandbox
+- 📜 **Script Tools** - Any language (Python, Node.js, Ruby, etc.) via JSON-RPC 2.0
+
+---
+
+## Built-in Tools
+
+### `build_tool` - Create WASM tools from Rust
+```
+build_tool(name: "my_tool", code: "fn main() {...}", description: "...")
+```
+
+### `register_script` - Register any-language tools
+```
+register_script(name: "my_tool", code: "...", interpreter: "python3", description: "...")
+```
+
+### `call_tool` - Execute any registered tool
+```
+call_tool(tool_name: "my_tool", arguments: {...})
+```
+
+### `list_tools` - List all registered tools
+### `delete_tool` - Remove a registered tool
+
+---
+
+## Script Tool Protocol
+
+Script tools communicate via JSON-RPC 2.0 over stdin/stdout and can:
+- 📝 **Log** - Emit log messages during execution
+- 📊 **Progress** - Report progress updates  
+- 🧠 **Memory** - Store/retrieve persistent data
+- 🎤 **Elicitation** - Request user input
+- 🤖 **Sampling** - Request LLM completions
+- 📦 **Resources** - List and read server resources
+
+See `skillz://protocol` for the complete protocol specification.
+"##.to_string()
+}
+
+fn get_examples_content_static() -> String {
+    r##"# 📝 Skillz Code Examples
+
+## 🦀 WASM Tools (Rust)
+
+### Hello World
+```rust
+fn main() {
+    println!("Hello from WASM!");
+}
+```
+
+---
+
+## 📜 Script Tools (Any Language)
+
+### Python Example
+```python
+#!/usr/bin/env python3
+import json
+import sys
+
+def main():
+    # IMPORTANT: Use readline() not read()!
+    request = json.loads(sys.stdin.readline())
+    args = request.get("params", {}).get("arguments", {})
+    
+    result = {"message": "Hello from Python!", "args": args}
+    
+    response = {"jsonrpc": "2.0", "result": result, "id": request.get("id")}
+    print(json.dumps(response))
+    sys.stdout.flush()
+
+if __name__ == "__main__":
+    main()
+```
+
+### Node.js Example
+```javascript
+const readline = require('readline');
+const rl = readline.createInterface({input: process.stdin, terminal: false});
+
+rl.on('line', (line) => {
+    const request = JSON.parse(line);
+    const result = { message: "Hello from Node.js!" };
+    console.log(JSON.stringify({jsonrpc: "2.0", result, id: request.id}));
+    process.exit(0);
+});
+```
+"##.to_string()
+}
+
+fn get_protocol_content_static() -> String {
+    r##"# 📡 JSON-RPC 2.0 Protocol for Script Tools
+
+## Request Format
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "execute",
+    "params": {
+        "arguments": {},
+        "context": {
+            "roots": ["/path/to/workspace"],
+            "capabilities": {
+                "sampling": true,
+                "elicitation": true,
+                "memory": true,
+                "resources": true
+            }
+        }
+    },
+    "id": 1
+}
+```
+
+## Available Methods (Script → Skillz)
+
+### Logging
+```json
+{"jsonrpc": "2.0", "method": "log", "params": {"level": "info", "message": "..."}}
+```
+
+### Progress
+```json
+{"jsonrpc": "2.0", "method": "progress", "params": {"current": 50, "total": 100, "message": "..."}}
+```
+
+### Memory
+```json
+{"jsonrpc": "2.0", "method": "memory/get", "params": {"key": "counter"}, "id": 10}
+{"jsonrpc": "2.0", "method": "memory/set", "params": {"key": "counter", "value": 42}, "id": 11}
+{"jsonrpc": "2.0", "method": "memory/list", "params": {}, "id": 12}
+{"jsonrpc": "2.0", "method": "memory/delete", "params": {"key": "counter"}, "id": 13}
+```
+
+### Resources (NEW!)
+```json
+{"jsonrpc": "2.0", "method": "resources/list", "params": {}, "id": 20}
+{"jsonrpc": "2.0", "method": "resources/read", "params": {"uri": "skillz://guide"}, "id": 21}
+```
+
+**Response for resources/list:**
+```json
+{"jsonrpc": "2.0", "result": {"resources": [
+    {"uri": "skillz://guide", "name": "Skillz Guide", "description": "..."},
+    {"uri": "skillz://tools/my_tool", "name": "my_tool", "description": "..."}
+]}, "id": 20}
+```
+
+**Response for resources/read:**
+```json
+{"jsonrpc": "2.0", "result": {"contents": [
+    {"uri": "skillz://guide", "mime_type": "text/markdown", "text": "# Guide..."}
+]}, "id": 21}
+```
+
+### Elicitation (User Input)
+```json
+{"jsonrpc": "2.0", "method": "elicitation/create", "params": {"message": "...", "requestedSchema": {}}, "id": 100}
+```
+
+### Sampling (LLM Completion)
+```json
+{"jsonrpc": "2.0", "method": "sampling/createMessage", "params": {"messages": [...], "maxTokens": 1000}, "id": 101}
+```
+
+## Final Response
+```json
+{"jsonrpc": "2.0", "result": {"your": "data"}, "id": 1}
+```
+
+## ⚠️ Critical: Use readline() NOT read()!
+```python
+# ✅ CORRECT
+request = json.loads(sys.stdin.readline())
+
+# ❌ WRONG - Blocks forever!
+request = json.loads(sys.stdin.read())
+```
+"##.to_string()
+}
+
+fn get_tool_info_static(registry: &registry::ToolRegistry, tool_name: &str) -> String {
+    match registry.get_tool(tool_name) {
+        Some(tool) => {
+            let (type_name, type_emoji) = match tool.tool_type() {
+                ToolType::Wasm => ("WASM", "🦀"),
+                ToolType::Script => ("Script", "📜"),
+                ToolType::Pipeline => ("Pipeline", "⛓️"),
+            };
+            format!(
+                "# {} {} Tool: {}\n\n## Description\n{}\n\n## Details\n- **Type:** {}\n- **Version:** {}\n- **Status:** ✅ Ready to use\n\n## Usage\n```\ncall_tool(tool_name: \"{}\")\n```\n",
+                type_emoji, type_name, tool.name(),
+                tool.description(),
+                type_name, tool.manifest.version,
+                tool.name()
+            )
+        }
+        None => format!(
+            "# ❌ Tool Not Found\n\nNo tool named '{}' exists.",
+            tool_name
+        ),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Get tools directory from env var or use ~/tools as default
     let tools_dir = std::env::var("TOOLS_DIR").unwrap_or_else(|_| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{}/tools", home)
-    });
-
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            format!("{}/tools", home)
+        });
+    
     let storage_dir = std::path::PathBuf::from(tools_dir);
     std::fs::create_dir_all(&storage_dir)?;
 
@@ -2681,7 +2557,7 @@ async fn main() -> Result<()> {
 
     eprintln!("Memory database initialized (with runtime integration)");
 
-    let state = AppState::new(registry, runtime, memory, storage_dir.clone());
+    let state = AppState::new(registry, runtime, memory);
 
     // Start hot reload if enabled
     let _hot_reload = if cli.hot_reload {
@@ -2735,7 +2611,7 @@ async fn main() -> Result<()> {
             if cli.hot_reload {
                 eprintln!("🔥 Hot reload enabled");
             }
-            state.serve(stdio()).await?.waiting().await?;
+    state.serve(stdio()).await?.waiting().await?;
         }
         "http" | "sse" => {
             use rmcp::transport::sse_server::{SseServer, SseServerConfig};

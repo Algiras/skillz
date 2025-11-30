@@ -9,5 +9,4 @@ pub mod memory;
 pub mod pipeline;
 pub mod registry;
 pub mod runtime;
-pub mod templates;
 pub mod watcher;

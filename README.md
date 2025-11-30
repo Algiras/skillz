@@ -77,14 +77,20 @@ No deployments. No restarts. Just ask.
 </div>
 
 ```bash
-# Install from crates.io (requires Rust)
-cargo install skillz
-
-# Install WASM target (for building Rust tools)
+# Install WASM target (required for building tools)
 rustup target add wasm32-wasip1
+
+# Install Skillz from crates.io
+cargo install skillz
 ```
 
-> **Note**: Script tools (Python, Node.js, etc.) work without the WASM target.
+**Or build from source:**
+
+```bash
+git clone https://github.com/Algiras/skillz.git
+cd skillz/mcp-wasm-host
+cargo install --path .
+```
 
 ---
 
@@ -102,9 +108,7 @@ Your support enables new features and improvements!
 
 ### Cursor IDE
 
-<a href="https://algiras.github.io/skillz/install-cursor.html"><img src="https://cursor.com/deeplink/mcp-install-dark.png" alt="Add to Cursor" height="32"></a>
-
-Or add manually to `~/.cursor/mcp.json`:
+Add to `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -199,11 +203,10 @@ curl -X POST http://localhost:8080/message \
 | 📊 **Logging/Progress** | Scripts can send logs and progress updates |
 | 🔥 **Hot Reload** | Watch tools directory, auto-reload on changes |
 | 📦 **Versioning** | Auto-backup on update, rollback to any version |
-| 📋 **Templates** | Pre-built tool patterns, create & share custom templates |
 
 ---
 
-## 📖 Available Tools (11 Core)
+## 📖 Available Tools (10 Core)
 
 | Tool | Description |
 |------|-------------|
@@ -217,7 +220,6 @@ curl -X POST http://localhost:8080/message \
 | `pipeline` | Create, list, delete pipeline tools (action-based) |
 | `memory` | Persistent storage for tools (store, get, list, delete, stats) |
 | `version` | List versions, rollback to previous, view version info |
-| `template` | Use/create tool templates (list, info, use, create, delete) |
 
 ---
 
@@ -353,7 +355,6 @@ MIT License - see [LICENSE](LICENSE)
 | 📖 **Documentation** | [algiras.github.io/skillz](https://algiras.github.io/skillz) |
 | 💻 **GitHub** | [github.com/Algiras/skillz](https://github.com/Algiras/skillz) |
 | 📋 **MCP Spec** | [modelcontextprotocol.io](https://modelcontextprotocol.io) |
-| 👔 **LinkedIn** | [linkedin.com/in/asimplek](https://www.linkedin.com/in/asimplek/) |
 
 ---
 

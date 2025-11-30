@@ -278,6 +278,8 @@ pub struct ClientCapabilities {
     pub elicitation: bool,
     /// Whether memory (persistent state) is available
     pub memory: bool,
+    /// Whether resources are available (read server resources)
+    pub resources: bool,
 }
 
 /// Context information passed to scripts (like MCP roots)
@@ -450,6 +452,45 @@ pub type ProgressHandler = std::sync::Arc<
         + Sync,
 >;
 
+/// Resource info returned by list
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceInfo {
+    pub uri: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
+/// Resource content returned by read
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceContent {
+    pub uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blob: Option<String>, // base64 encoded
+}
+
+/// Type alias for resource list handler callback
+pub type ResourceListHandler = std::sync::Arc<
+    dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<ResourceInfo>>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Type alias for resource read handler callback
+pub type ResourceReadHandler = std::sync::Arc<
+    dyn Fn(
+            String,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ResourceContent>> + Send>>
+        + Send
+        + Sync,
+>;
+
 #[derive(Clone)]
 pub struct ToolRuntime {
     engine: Engine,
@@ -464,6 +505,10 @@ pub struct ToolRuntime {
     logging_handler: Option<LoggingHandler>,
     /// Handler for forwarding progress to MCP client
     progress_handler: Option<ProgressHandler>,
+    /// Handler for listing resources
+    resource_list_handler: Option<ResourceListHandler>,
+    /// Handler for reading resources
+    resource_read_handler: Option<ResourceReadHandler>,
 }
 
 impl ToolRuntime {
@@ -493,6 +538,8 @@ impl ToolRuntime {
             sampling_handler: None,
             logging_handler: None,
             progress_handler: None,
+            resource_list_handler: None,
+            resource_read_handler: None,
         })
     }
 
@@ -509,6 +556,8 @@ impl ToolRuntime {
             sampling_handler: None,
             logging_handler: None,
             progress_handler: None,
+            resource_list_handler: None,
+            resource_read_handler: None,
         })
     }
 
@@ -542,6 +591,18 @@ impl ToolRuntime {
     /// Set progress handler (forwards script progress to MCP client)
     pub fn with_progress_handler(mut self, handler: ProgressHandler) -> Self {
         self.progress_handler = Some(handler);
+        self
+    }
+
+    /// Set resource handlers (for listing and reading server resources)
+    pub fn with_resource_handlers(
+        mut self,
+        list_handler: ResourceListHandler,
+        read_handler: ResourceReadHandler,
+    ) -> Self {
+        self.resource_list_handler = Some(list_handler);
+        self.resource_read_handler = Some(read_handler);
+        self.context.capabilities.resources = true;
         self
     }
 
@@ -957,6 +1018,65 @@ impl ToolRuntime {
                                 }
                             } else {
                                 serde_json::json!({"error": "Sampling not supported by client"})
+                            };
+
+                            let response_json = serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "result": result,
+                                "id": response.id
+                            });
+                            stdin.write_all(serde_json::to_string(&response_json)?.as_bytes())?;
+                            stdin.write_all(b"\n")?;
+                            stdin.flush()?;
+                        }
+
+                        // ===== Resources requests (list/read server resources) =====
+                        "resources/list" if is_request => {
+                            let result = if let Some(ref handler) = self.resource_list_handler {
+                                let handle = tokio::runtime::Handle::current();
+                                let handler = handler.clone();
+                                match handle.block_on(handler()) {
+                                    Ok(resources) => serde_json::json!({"resources": resources}),
+                                    Err(e) => serde_json::json!({"error": e.to_string()}),
+                                }
+                            } else {
+                                serde_json::json!({"error": "Resources not available"})
+                            };
+
+                            let response_json = serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "result": result,
+                                "id": response.id
+                            });
+                            stdin.write_all(serde_json::to_string(&response_json)?.as_bytes())?;
+                            stdin.write_all(b"\n")?;
+                            stdin.flush()?;
+                        }
+
+                        "resources/read" if is_request => {
+                            let result = if let Some(ref handler) = self.resource_read_handler {
+                                if let Some(params) = response.params {
+                                    let uri = params
+                                        .get("uri")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+
+                                    if uri.is_empty() {
+                                        serde_json::json!({"error": "Missing uri parameter"})
+                                    } else {
+                                        let handle = tokio::runtime::Handle::current();
+                                        let handler = handler.clone();
+                                        match handle.block_on(handler(uri)) {
+                                            Ok(content) => serde_json::json!({"contents": [content]}),
+                                            Err(e) => serde_json::json!({"error": e.to_string()}),
+                                        }
+                                    }
+                                } else {
+                                    serde_json::json!({"error": "Missing parameters"})
+                                }
+                            } else {
+                                serde_json::json!({"error": "Resources not available"})
                             };
 
                             let response_json = serde_json::json!({
