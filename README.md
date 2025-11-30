@@ -102,7 +102,7 @@ Your support enables new features and improvements!
 
 ### Cursor IDE
 
-[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.png)](https://algiras.github.io/skillz/install-cursor.html)
+<a href="https://algiras.github.io/skillz/install-cursor.html"><img src="https://cursor.com/deeplink/mcp-install-dark.png" alt="Add to Cursor" height="32"></a>
 
 Or add manually to `~/.cursor/mcp.json`:
 
