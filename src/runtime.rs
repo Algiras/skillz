@@ -409,6 +409,19 @@ pub struct ProgressUpdate {
     pub message: Option<String>,
 }
 
+/// Stream chunk from a script (partial results)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamChunk {
+    /// The chunk data (can be text, JSON, etc.)
+    pub data: Value,
+    /// Optional chunk index for ordering
+    #[serde(default)]
+    pub index: Option<u64>,
+    /// Whether this is the final chunk before the result
+    #[serde(default)]
+    pub is_final: bool,
+}
+
 /// Result of script execution including logs
 #[derive(Debug)]
 pub struct ScriptResult {
@@ -508,6 +521,13 @@ pub type ToolCallHandler = std::sync::Arc<
         + Sync,
 >;
 
+/// Type alias for stream handler callback (forwards stream chunks to client)
+pub type StreamHandler = std::sync::Arc<
+    dyn Fn(StreamChunk) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
+
 
 #[derive(Clone)]
 pub struct ToolRuntime {
@@ -529,6 +549,8 @@ pub struct ToolRuntime {
     resource_read_handler: Option<ResourceReadHandler>,
     /// Handler for calling other tools
     tool_call_handler: Option<ToolCallHandler>,
+    /// Handler for stream chunks (partial results)
+    stream_handler: Option<StreamHandler>,
 }
 
 impl ToolRuntime {
@@ -561,6 +583,7 @@ impl ToolRuntime {
             resource_list_handler: None,
             resource_read_handler: None,
             tool_call_handler: None,
+            stream_handler: None,
         })
     }
 
@@ -580,6 +603,7 @@ impl ToolRuntime {
             resource_list_handler: None,
             resource_read_handler: None,
             tool_call_handler: None,
+            stream_handler: None,
         })
     }
 
@@ -631,6 +655,12 @@ impl ToolRuntime {
     /// Set tool call handler (for tools calling other tools)
     pub fn with_tool_call_handler(mut self, handler: ToolCallHandler) -> Self {
         self.tool_call_handler = Some(handler);
+        self
+    }
+
+    /// Set stream handler (for forwarding stream chunks to client)
+    pub fn with_stream_handler(mut self, handler: StreamHandler) -> Self {
+        self.stream_handler = Some(handler);
         self
     }
 
@@ -883,6 +913,26 @@ impl ToolRuntime {
                                     }
 
                                     progress.push(prog);
+                                }
+                            }
+                        }
+                        
+                        // ===== Stream chunks (partial results) =====
+                        "stream" | "stream/chunk" => {
+                            if let Some(params) = response.params {
+                                if let Ok(chunk) = serde_json::from_value::<StreamChunk>(params) {
+                                    eprintln!(
+                                        "[STREAM] chunk {} (final: {})",
+                                        chunk.index.unwrap_or(0),
+                                        chunk.is_final
+                                    );
+
+                                    // Forward to client if handler is set
+                                    if let Some(ref handler) = self.stream_handler {
+                                        let handle = tokio::runtime::Handle::current();
+                                        let handler = handler.clone();
+                                        handle.block_on(handler(chunk));
+                                    }
                                 }
                             }
                         }

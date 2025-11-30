@@ -456,6 +456,36 @@ impl AppState {
             })
         });
 
+        // Set up stream handler - forward stream chunks (for progressive output)
+        let peer_for_stream = peer.clone();
+        let stream_handler: runtime::StreamHandler = Arc::new(move |chunk| {
+            let peer = peer_for_stream.clone();
+            Box::pin(async move {
+                // Log the chunk for debugging
+                eprintln!(
+                    "[STREAM] Received chunk {}: {:?}",
+                    chunk.index.unwrap_or(0),
+                    chunk.data
+                );
+
+                // Forward as a log message for now (could use custom notification in future)
+                if let Some(ref p) = *peer.read().await {
+                    let _ = p
+                        .notify_logging_message(LoggingMessageNotificationParam {
+                            level: LoggingLevel::Info,
+                            logger: Some("skillz.stream".to_string()),
+                            data: serde_json::json!({
+                                "type": "stream_chunk",
+                                "index": chunk.index,
+                                "is_final": chunk.is_final,
+                                "data": chunk.data
+                            }),
+                        })
+                        .await;
+                }
+            })
+        });
+
         // Set up tool call handler - allow tools to call other tools
         let registry_for_tool_call = registry.clone();
         let runtime_for_tool_call = runtime.clone();
@@ -485,7 +515,8 @@ impl AppState {
             .with_elicitation_handler(elicitation_handler)
             .with_sampling_handler(sampling_handler)
             .with_resource_handlers(resource_list_handler, resource_read_handler)
-            .with_tool_call_handler(tool_call_handler);
+            .with_tool_call_handler(tool_call_handler)
+            .with_stream_handler(stream_handler);
 
         Self {
             registry,
