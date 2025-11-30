@@ -456,13 +456,36 @@ impl AppState {
             })
         });
 
+        // Set up tool call handler - allow tools to call other tools
+        let registry_for_tool_call = registry.clone();
+        let runtime_for_tool_call = runtime.clone();
+        let tool_call_handler: runtime::ToolCallHandler = Arc::new(move |name, arguments| {
+            let reg = registry_for_tool_call.clone();
+            let rt = runtime_for_tool_call.clone();
+            Box::pin(async move {
+                let tool = reg
+                    .get_tool(&name)
+                    .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found", name))?;
+
+                let args = arguments.unwrap_or(serde_json::json!({}));
+
+                // Use spawn_blocking for sync operations
+                let result = tokio::task::spawn_blocking(move || rt.call_tool(&tool, args))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Task join error: {}", e))??;
+
+                Ok(result)
+            })
+        });
+
         // Configure runtime with handlers
         runtime = runtime
             .with_logging_handler(logging_handler)
             .with_progress_handler(progress_handler)
             .with_elicitation_handler(elicitation_handler)
             .with_sampling_handler(sampling_handler)
-            .with_resource_handlers(resource_list_handler, resource_read_handler);
+            .with_resource_handlers(resource_list_handler, resource_read_handler)
+            .with_tool_call_handler(tool_call_handler);
 
         Self {
             registry,

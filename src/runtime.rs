@@ -498,6 +498,16 @@ pub type ResourceReadHandler = std::sync::Arc<
         + Sync,
 >;
 
+/// Type alias for tools/call handler callback (tools calling other tools)
+pub type ToolCallHandler = std::sync::Arc<
+    dyn Fn(
+            String,              // tool name
+            Option<Value>,       // arguments
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>>
+        + Send
+        + Sync,
+>;
+
 
 #[derive(Clone)]
 pub struct ToolRuntime {
@@ -517,6 +527,8 @@ pub struct ToolRuntime {
     resource_list_handler: Option<ResourceListHandler>,
     /// Handler for reading resources
     resource_read_handler: Option<ResourceReadHandler>,
+    /// Handler for calling other tools
+    tool_call_handler: Option<ToolCallHandler>,
 }
 
 impl ToolRuntime {
@@ -548,6 +560,7 @@ impl ToolRuntime {
             progress_handler: None,
             resource_list_handler: None,
             resource_read_handler: None,
+            tool_call_handler: None,
         })
     }
 
@@ -566,6 +579,7 @@ impl ToolRuntime {
             progress_handler: None,
             resource_list_handler: None,
             resource_read_handler: None,
+            tool_call_handler: None,
         })
     }
 
@@ -611,6 +625,12 @@ impl ToolRuntime {
         self.resource_list_handler = Some(list_handler);
         self.resource_read_handler = Some(read_handler);
         self.context.capabilities.resources = true;
+        self
+    }
+
+    /// Set tool call handler (for tools calling other tools)
+    pub fn with_tool_call_handler(mut self, handler: ToolCallHandler) -> Self {
+        self.tool_call_handler = Some(handler);
         self
     }
 
@@ -1087,6 +1107,44 @@ impl ToolRuntime {
                                 }
                             } else {
                                 serde_json::json!({"error": "Resources not available"})
+                            };
+
+                            let response_json = serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "result": result,
+                                "id": response.id
+                            });
+                            stdin.write_all(serde_json::to_string(&response_json)?.as_bytes())?;
+                            stdin.write_all(b"\n")?;
+                            stdin.flush()?;
+                        }
+
+                        // ===== Tools calling other tools =====
+                        "tools/call" if is_request => {
+                            let result = if let Some(ref handler) = self.tool_call_handler {
+                                if let Some(params) = response.params {
+                                    let name = params
+                                        .get("name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let arguments = params.get("arguments").cloned();
+
+                                    if name.is_empty() {
+                                        serde_json::json!({"error": "Missing tool name"})
+                                    } else {
+                                        let handle = tokio::runtime::Handle::current();
+                                        let handler = handler.clone();
+                                        match handle.block_on(handler(name.clone(), arguments)) {
+                                            Ok(output) => serde_json::json!({"output": output}),
+                                            Err(e) => serde_json::json!({"error": format!("Tool '{}' failed: {}", name, e)}),
+                                        }
+                                    }
+                                } else {
+                                    serde_json::json!({"error": "Missing parameters"})
+                                }
+                            } else {
+                                serde_json::json!({"error": "Tool calling not available"})
                             };
 
                             let response_json = serde_json::json!({
