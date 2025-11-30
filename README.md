@@ -199,9 +199,11 @@ curl -X POST http://localhost:8080/message \
 | ⛓️ **Pipelines** | Chain tools together declaratively |
 | 🌍 **HTTP Transport** | Run as HTTP server with SSE for web apps |
 | 💬 **Elicitation** | Scripts can request user input via MCP protocol |
-| 🧠 **Memory** | Persistent key-value storage for tools |
+| 🧠 **Memory** | Persistent key-value storage with TTL support |
 | 📦 **Resources** | Tools can list and read server resources |
 | 🔐 **Secrets** | Forward `SKILLZ_*` env vars to tools |
+| 🔗 **Tools/Call** | Tools can call other registered tools |
+| 📡 **Streaming** | Progressive output via stream chunks |
 | 📊 **Logging/Progress** | Scripts can send logs and progress updates |
 | 🔥 **Hot Reload** | Watch tools directory, auto-reload on changes |
 | 📦 **Versioning** | Auto-backup on update, rollback to any version |

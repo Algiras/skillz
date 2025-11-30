@@ -2024,12 +2024,13 @@ Report progress during long operations:
 
 ---
 
-## 🧠 Memory (Persistent State)
+## 🧠 Memory (Persistent State with TTL)
 
 Store and retrieve data that persists across sessions.
 **Check `context.capabilities.memory` before using!**
 
 All memory operations are isolated per-tool (tool name is automatic).
+Supports optional TTL for caching use cases.
 
 ### Get a Value
 ```json
@@ -2048,6 +2049,13 @@ All memory operations are isolated per-tool (tool name is automatic).
 ```json
 {"jsonrpc": "2.0", "result": {"success": true}, "id": 11}
 ```
+
+### Set with TTL (Caching)
+```json
+{"jsonrpc": "2.0", "method": "memory/set", "params": {"key": "cached", "value": "data", "ttl": 60}, "id": 11}
+```
+- `ttl` - Time-to-live in seconds (optional, omit for permanent storage)
+- After TTL expires, `memory/get` returns null
 
 ### List All Keys
 ```json
@@ -2140,6 +2148,61 @@ def resources_read(uri):
     resp = json.loads(sys.stdin.readline())
     contents = resp.get("result", {}).get("contents", [])
     return contents[0].get("text") if contents else None
+```
+
+---
+
+## 🔗 Tools Calling Tools (`tools/call`)
+
+Call other registered tools from within your script tool.
+Enables dynamic composition and meta-tools.
+
+### Call Another Tool
+```json
+{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "json_formatter", "arguments": {"data": "..."}}, "id": 30}
+```
+**Response:**
+```json
+{"jsonrpc": "2.0", "result": {"output": "<tool's result>"}, "id": 30}
+```
+
+### Python Helper
+```python
+def call_tool(name, arguments=None):
+    params = {"name": name}
+    if arguments:
+        params["arguments"] = arguments
+    req = {"jsonrpc": "2.0", "method": "tools/call", "params": params, "id": 30}
+    print(json.dumps(req), flush=True)
+    resp = json.loads(sys.stdin.readline())
+    return resp.get("result", {}).get("output")
+```
+
+---
+
+## 📡 Streaming Output (`stream/chunk`)
+
+Send partial results progressively for long-running operations.
+Stream chunks are notifications (no response needed).
+
+### Send Stream Chunk
+```json
+{"jsonrpc": "2.0", "method": "stream/chunk", "params": {"data": "partial result...", "index": 0, "is_final": false}}
+{"jsonrpc": "2.0", "method": "stream/chunk", "params": {"data": "more data...", "index": 1, "is_final": true}}
+```
+
+### Parameters
+- `data` - The chunk content (any JSON value)
+- `index` - Optional chunk number for ordering
+- `is_final` - Whether this is the last chunk before final result
+
+### Python Helper
+```python
+def stream_chunk(data, index=None, is_final=False):
+    params = {"data": data, "is_final": is_final}
+    if index is not None:
+        params["index"] = index
+    print(json.dumps({"jsonrpc": "2.0", "method": "stream/chunk", "params": params}), flush=True)
 ```
 
 ---
