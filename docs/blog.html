@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>I Built an MCP Server That Lets AI Create Its Own Tools | Skillz Blog</title>
+    <meta name="description"
+        content="How Anthropic's MCP announcement inspired me to build a self-extending AI development platform with 27+ features.">
+    <meta property="og:title" content="I Built an MCP Server That Lets AI Create Its Own Tools">
+    <meta property="og:description"
+        content="How Anthropic's MCP announcement inspired me to build a self-extending AI development platform with 27+ features.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://algiras.github.io/skillz/blog.html">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="author" content="Algimantas Krasauskas">
+    <link rel="canonical" href="https://algiras.github.io/skillz/blog.html">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-tertiary: #1a1a25;
+            --bg-card: #16161f;
+            --accent-primary: #7c3aed;
+            --accent-secondary: #a855f7;
+            --accent-glow: rgba(124, 58, 237, 0.4);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border: #2d2d3a;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --code-bg: #1e1e2e;
+            --rust-orange: #f97316;
+            --python-blue: #3b82f6;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Merriweather', Georgia, serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.8;
+            overflow-x: hidden;
+        }
+
+        .bg-pattern {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            background:
+                radial-gradient(ellipse at 20% 20%, rgba(124, 58, 237, 0.06) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(168, 85, 247, 0.04) 0%, transparent 50%);
+        }
+
+        /* Header */
+        header {
+            padding: 1rem 0;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(10, 10, 15, 0.9);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            z-index: 100;
+        }
+
+        .header-container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.9rem;
+            transition: color 0.2s;
+        }
+
+        .back-link:hover {
+            color: var(--accent-secondary);
+        }
+
+        /* Article */
+        article {
+            max-width: 750px;
+            margin: 0 auto;
+            padding: 8rem 2rem 4rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Hero */
+        .article-hero {
+            text-align: center;
+            margin-bottom: 4rem;
+            padding-bottom: 3rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .article-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(124, 58, 237, 0.15);
+            border: 1px solid rgba(124, 58, 237, 0.3);
+            border-radius: 100px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.85rem;
+            color: var(--accent-secondary);
+            margin-bottom: 1.5rem;
+        }
+
+        h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: clamp(2rem, 5vw, 3rem);
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 1.5rem;
+            background: linear-gradient(135deg, var(--text-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .article-subtitle {
+            font-style: italic;
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+        }
+
+        .article-meta {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            color: var(--text-muted);
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.9rem;
+        }
+
+        .article-meta a {
+            color: var(--accent-secondary);
+            text-decoration: none;
+        }
+
+        .article-meta a:hover {
+            text-decoration: underline;
+        }
+
+        /* Content */
+        .article-content {
+            font-size: 1.1rem;
+        }
+
+        .article-content h2 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.8rem;
+            font-weight: 600;
+            margin: 3rem 0 1.5rem;
+            color: var(--accent-secondary);
+        }
+
+        .article-content h3 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin: 2.5rem 0 1rem;
+            color: var(--text-primary);
+        }
+
+        .article-content p {
+            margin-bottom: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        .article-content strong {
+            color: var(--text-primary);
+        }
+
+        .article-content a {
+            color: var(--accent-secondary);
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+
+        .article-content a:hover {
+            color: var(--accent-primary);
+        }
+
+        .article-content ul,
+        .article-content ol {
+            margin: 1.5rem 0;
+            padding-left: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        .article-content li {
+            margin-bottom: 0.75rem;
+        }
+
+        .article-content blockquote {
+            border-left: 4px solid var(--accent-primary);
+            padding: 1rem 1.5rem;
+            margin: 2rem 0;
+            background: rgba(124, 58, 237, 0.1);
+            border-radius: 0 8px 8px 0;
+            font-style: italic;
+        }
+
+        .article-content blockquote p {
+            margin: 0;
+        }
+
+        /* Code blocks */
+        .article-content pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        .article-content code {
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(124, 58, 237, 0.15);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .article-content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        /* Highlight */
+        .highlight-box {
+            background: linear-gradient(135deg, rgba(124, 58, 237, 0.1), rgba(168, 85, 247, 0.1));
+            border: 1px solid rgba(124, 58, 237, 0.3);
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            margin: 2rem 0;
+            text-align: center;
+        }
+
+        .highlight-box p {
+            font-size: 1.2rem;
+            color: var(--text-primary);
+            margin: 0;
+        }
+
+        /* Tables */
+        .article-content table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 2rem 0;
+            background: var(--bg-card);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        .article-content th,
+        .article-content td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            font-family: 'Outfit', sans-serif;
+        }
+
+        .article-content th {
+            background: rgba(124, 58, 237, 0.1);
+            color: var(--accent-secondary);
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .article-content td {
+            color: var(--text-secondary);
+        }
+
+        .article-content tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Feature grid */
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .feature-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .feature-item h4 {
+            font-family: 'Outfit', sans-serif;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .feature-item p {
+            font-size: 0.95rem;
+            margin: 0;
+        }
+
+        /* CTA */
+        .cta-section {
+            background: linear-gradient(135deg, rgba(124, 58, 237, 0.25), rgba(168, 85, 247, 0.2));
+            border: 2px solid rgba(124, 58, 237, 0.5);
+            border-radius: 16px;
+            padding: 3rem;
+            margin: 4rem 0;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(124, 58, 237, 0.2);
+        }
+
+        .cta-section h2 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--text-primary), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .cta-section p {
+            color: var(--text-primary);
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem 2rem;
+            border-radius: 12px;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.3s;
+            font-size: 1rem;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white !important;
+            box-shadow: 0 4px 20px rgba(16, 185, 129, 0.4);
+            border: none;
+            font-weight: 600;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 12px 35px rgba(16, 185, 129, 0.5);
+            background: linear-gradient(135deg, #34d399, #10b981);
+            color: white !important;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.08);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            color: white !important;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: rgba(255, 255, 255, 0.4);
+            transform: translateY(-2px);
+            color: white !important;
+        }
+
+        /* Footer */
+        .article-footer {
+            border-top: 1px solid var(--border);
+            padding-top: 2rem;
+            margin-top: 4rem;
+            text-align: center;
+        }
+
+        .author-card {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .author-avatar {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .author-info {
+            text-align: left;
+        }
+
+        .author-name {
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .author-bio {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        .share-links {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-top: 2rem;
+        }
+
+        .share-link {
+            padding: 0.75rem 1.5rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .share-link:hover {
+            border-color: var(--accent-primary);
+            color: var(--text-primary);
+        }
+
+        /* Horizontal rule */
+        .article-content hr {
+            border: none;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border), transparent);
+            margin: 3rem 0;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            article {
+                padding: 6rem 1.5rem 3rem;
+            }
+
+            .article-meta {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+
+            .cta-buttons {
+                flex-direction: column;
+            }
+
+            .btn {
+                justify-content: center;
+            }
+        }
+
+        /* Syntax highlighting */
+        .keyword { color: #c678dd; }
+        .function { color: #61afef; }
+        .string { color: #98c379; }
+        .comment { color: #5c6370; font-style: italic; }
+        .number { color: #d19a66; }
+
+        /* Conversation boxes */
+        .conversation-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .conversation-box p {
+            margin: 0.75rem 0;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.95rem;
+        }
+
+        .conversation-box p:first-child {
+            margin-top: 0;
+        }
+
+        .conversation-box p:last-child {
+            margin-bottom: 0;
+        }
+
+        .user-msg {
+            color: var(--text-secondary);
+            padding-left: 1rem;
+            border-left: 3px solid var(--text-muted);
+        }
+
+        .claude-msg {
+            color: var(--text-secondary);
+            padding-left: 1rem;
+            border-left: 3px solid var(--accent-secondary);
+        }
+
+        .result-msg {
+            color: var(--success);
+            background: rgba(16, 185, 129, 0.1);
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            margin-top: 1rem !important;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="bg-pattern"></div>
+
+    <header>
+        <div class="header-container">
+            <a href="index.html" class="logo">
+                <span>⚡</span> Skillz
+            </a>
+            <a href="index.html" class="back-link">← Back to Home</a>
+        </div>
+    </header>
+
+    <article>
+        <div class="article-hero">
+            <span class="article-badge">📝 Blog Post • November 2025</span>
+            <h1>I Built an MCP Server That Lets AI Create Its Own Tools — Here's What Happened</h1>
+            <p class="article-subtitle">How Anthropic's MCP announcement inspired me to build a self-extending AI development platform with 27+ features</p>
+            <div class="article-meta">
+                <span>By <a href="https://www.linkedin.com/in/asimplek/">Algimantas Krasauskas</a></span>
+                <span>8 min read</span>
+            </div>
+        </div>
+
+        <div class="article-content">
+            <h2>The Spark: Code Execution & Agent Skills</h2>
+            
+            <p>Two recent posts from Anthropic completely changed how I think about AI agents.</p>
+
+            <p>First, their engineering deep dive on <a href="https://www.anthropic.com/engineering/code-execution-with-mcp" target="_blank">Code execution with MCP</a> articulated a problem I'd been seeing everywhere:</p>
+
+            <blockquote>
+                <p>"As the number of connected tools grows, loading all tool definitions upfront and passing intermediate results through the context window slows down agents... Code execution enables agents to interact with MCP servers more efficiently, handling more tools while using fewer tokens."</p>
+            </blockquote>
+
+            <p>They showed how letting agents write code to call tools could reduce token usage by <strong>98%</strong>.</p>
+
+            <p>Then came <a href="https://claude.com/blog/skills" target="_blank">Agent Skills</a>, which introduced the idea of "packaging expertise" into folders that Claude loads on demand.</p>
+
+            <p>Putting these together triggered an "Aha!" moment:</p>
+
+            <div class="highlight-box">
+                <p><strong>If agents can write code to <em>call</em> tools (for efficiency) and load <em>skills</em> (for expertise), why can't they write code to <em>create</em> new tools?</strong></p>
+            </div>
+
+            <p>Why stop at efficient execution? Why not let the agent build its own toolkit on the fly? If it needs a better JSON parser, it shouldn't just run a script once—it should compile a high-performance WASM tool and register it for future use.</p>
+
+            <p>That question led me down a rabbit hole that resulted in <strong>Skillz</strong> — an MCP server that implements Anthropic's code execution vision and extends it into a self-improving tool factory.</p>
+
+            <hr>
+
+            <h2>The Problem: Static Tools in a Dynamic World</h2>
+
+            <p>If you've worked with Claude, Cursor, or any MCP-compatible AI assistant, you know the drill:</p>
+
+            <ol>
+                <li>❌ Write server code with a new tool</li>
+                <li>❌ Deploy and restart</li>
+                <li>❌ Restart your editor to pick up changes</li>
+                <li>❌ Repeat for every. single. tool.</li>
+            </ol>
+
+            <p>It's like having a brilliant assistant but making them fill out requisition forms every time they need a pencil.</p>
+
+            <p><strong>What if AI could just... make the pencil?</strong></p>
+
+            <hr>
+
+            <h2>Enter Skillz: Self-Extending AI</h2>
+
+            <p>Skillz flips the script. Instead of pre-defining tools, you give AI the ability to create them at runtime:</p>
+
+            <pre><code><span class="string">"Build me a tool that fetches weather data"</span>
+→ AI writes the code
+→ Skillz compiles it to WASM
+→ Tool is instantly available</code></pre>
+
+            <p><strong>No deployments. No restarts. Zero downtime.</strong></p>
+
+            <p>The tool persists across sessions, can be versioned, rolled back, shared, and even call other tools. It's tools all the way down.</p>
+
+            <hr>
+
+            <h2>The Technical Journey: 27 Features Later</h2>
+
+            <p>What started as a "compile Rust to WASM" experiment evolved into a full-featured platform. Here's everything Skillz supports today:</p>
+
+            <h3>🦀 Multi-Language Tool Creation</h3>
+
+            <p><strong>WASM Tools (Rust)</strong> — Safe, sandboxed, lightning-fast:</p>
+
+            <div class="conversation-box">
+                <p class="user-msg"><strong>You:</strong> I need a really fast prime number generator for testing. Performance matters.</p>
+                <p class="claude-msg"><strong>Claude:</strong> For maximum performance, I'll build this as a WASM tool in Rust. It'll run in a secure sandbox with near-native speed...</p>
+                <p class="result-msg">✅ Created <code>prime_generator</code> — compiled to WebAssembly. Try: "Generate primes up to 10000"</p>
+            </div>
+
+            <p><strong>Script Tools</strong> — Python, Node.js, Ruby, Bash, anything:</p>
+
+            <div class="conversation-box">
+                <p class="user-msg"><strong>You:</strong> Can you make me an HTTP client that handles retries and timeouts nicely?</p>
+                <p class="claude-msg"><strong>Claude:</strong> I'll create a Python tool with the <code>requests</code> and <code>tenacity</code> libraries for robust HTTP handling...</p>
+                <p class="result-msg">✅ Created <code>http_client</code> with dependencies auto-installed in an isolated virtual environment.</p>
+            </div>
+
+            <p><strong>Pipelines</strong> — Chain tools together:</p>
+
+            <div class="conversation-box">
+                <p class="user-msg"><strong>You:</strong> I want to fetch a webpage, extract the main content, translate it to Spanish, and save it as a PDF. Can we do that in one command?</p>
+                <p class="claude-msg"><strong>Claude:</strong> I'll create a pipeline that chains those tools together. Each step's output feeds into the next...</p>
+                <p class="result-msg">✅ Created <code>webpage_to_spanish_pdf</code> pipeline. Just say "Process https://example.com" and it runs all four steps automatically.</p>
+            </div>
+
+            <h3>📦 First-Class Dependency Management</h3>
+
+            <p>This was the game-changer:</p>
+
+            <div class="conversation-box">
+                <p class="user-msg"><strong>You:</strong> I need to parse some complex JSON with validation and regex matching.</p>
+                <p class="claude-msg"><strong>Claude:</strong> I'll create a WASM tool with <code>serde</code>, <code>serde_json</code>, and <code>regex</code> crates...</p>
+                <p class="result-msg">✅ Created <code>json_processor</code> with Rust dependencies. Compiled to WebAssembly with all crates bundled.</p>
+            </div>
+
+            <div class="conversation-box">
+                <p class="user-msg"><strong>You:</strong> Now I need a data analysis tool with pandas and numpy.</p>
+                <p class="claude-msg"><strong>Claude:</strong> I'll build that as a Python tool with those dependencies...</p>
+                <p class="result-msg">✅ Created <code>data_analyzer</code>. A virtual environment was created and pandas/numpy were installed automatically.</p>
+            </div>
+
+            <h3>⚡ Code Execution Mode (The Token Saver)</h3>
+
+            <p>Here's where it gets really powerful:</p>
+
+            <div class="conversation-box">
+                <p class="user-msg"><strong>You:</strong> I need to check the weather in 10 cities, translate each forecast to the local language, and compile a report. But I don't want to wait for 30 separate tool calls.</p>
+                <p class="claude-msg"><strong>Claude:</strong> I'll use code execution mode to do this efficiently. All your registered tools become callable functions in a single script...</p>
+                <p class="result-msg">✅ Done! Processed all 10 cities in one execution. This used ~2,000 tokens instead of ~150,000 for sequential calls.</p>
+            </div>
+
+            <p><strong>Result: 98% token savings</strong>, exactly as predicted in Anthropic's engineering blog.</p>
+
+            <hr>
+
+            <h2>All 27+ Features at a Glance</h2>
+
+            <div class="feature-grid">
+                <div class="feature-item">
+                    <h4>🦀 WASM Tools</h4>
+                    <p>Compile Rust → WebAssembly at runtime with near-native performance</p>
+                </div>
+                <div class="feature-item">
+                    <h4>📜 Script Tools</h4>
+                    <p>Python, Node.js, Ruby, Bash, or any language with JSON-RPC 2.0</p>
+                </div>
+                <div class="feature-item">
+                    <h4>⛓️ Pipelines</h4>
+                    <p>Chain tools together declaratively with variable resolution</p>
+                </div>
+                <div class="feature-item">
+                    <h4>📦 Dependencies</h4>
+                    <p>Rust crates, pip packages, npm modules — auto-installed</p>
+                </div>
+                <div class="feature-item">
+                    <h4>💾 Persistent Memory</h4>
+                    <p>SQLite-based key-value store with TTL support</p>
+                </div>
+                <div class="feature-item">
+                    <h4>💬 Elicitation</h4>
+                    <p>Scripts can request user input mid-execution</p>
+                </div>
+                <div class="feature-item">
+                    <h4>🧠 Sampling</h4>
+                    <p>Scripts can request LLM completions</p>
+                </div>
+                <div class="feature-item">
+                    <h4>🔐 Sandbox</h4>
+                    <p>bubblewrap, firejail, or nsjail isolation</p>
+                </div>
+                <div class="feature-item">
+                    <h4>🔑 Secrets</h4>
+                    <p>Forward SKILLZ_* env vars to tools</p>
+                </div>
+                <div class="feature-item">
+                    <h4>🌍 Import/Export</h4>
+                    <p>Import from GitHub repos and Gists</p>
+                </div>
+                <div class="feature-item">
+                    <h4>🔥 Hot Reload</h4>
+                    <p>Auto-reload on file changes, no restart</p>
+                </div>
+                <div class="feature-item">
+                    <h4>📦 Versioning</h4>
+                    <p>Auto-backup and rollback to any version</p>
+                </div>
+                <div class="feature-item">
+                    <h4>🌐 HTTP Transport</h4>
+                    <p>Run as HTTP server with SSE</p>
+                </div>
+                <div class="feature-item">
+                    <h4>📋 Annotations</h4>
+                    <p>readOnlyHint, destructiveHint, idempotentHint</p>
+                </div>
+                <div class="feature-item">
+                    <h4>🔗 Tools/Call</h4>
+                    <p>Tools can call other registered tools</p>
+                </div>
+                <div class="feature-item">
+                    <h4>📡 Streaming</h4>
+                    <p>Progressive output via stream chunks</p>
+                </div>
+            </div>
+
+            <p>Plus: logging, progress updates, resource subscriptions, listChanged notifications, cancellation handling, _meta support, and more.</p>
+
+            <hr>
+
+            <h2>The Architecture</h2>
+
+            <p>Skillz is ~7,400 lines of Rust, built on:</p>
+
+            <ul>
+                <li><strong>wasmtime</strong>: Industry-standard WASM runtime with WASI support</li>
+                <li><strong>rmcp</strong>: Official MCP Rust SDK</li>
+                <li><strong>rusqlite</strong>: Embedded SQLite for persistence</li>
+                <li><strong>tokio</strong>: Async runtime for non-blocking I/O</li>
+            </ul>
+
+            <div style="margin: 3rem 0; text-align: center;">
+                <img src="architecture-flow.png" alt="Skillz Architecture Flow" style="max-width: 100%; border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 8px 30px rgba(0,0,0,0.3);">
+                <p style="font-size: 0.9rem; color: var(--text-muted); margin-top: 1rem;">High-level architecture and data flow</p>
+            </div>
+
+            <p>The core insight was separating tool types (WASM, Script, Pipeline) from the execution layer, allowing each to be optimized independently while sharing a common registry and memory system.</p>
+
+            <hr>
+
+            <h2>Getting Started</h2>
+
+            <h3>Installation</h3>
+
+            <pre><code><span class="comment"># Add WASM target</span>
+rustup target add wasm32-wasip1
+
+<span class="comment"># Install from crates.io</span>
+cargo install skillz</code></pre>
+
+            <h3>Configuration (Cursor IDE)</h3>
+
+            <p>Add to <code>~/.cursor/mcp.json</code>:</p>
+
+            <pre><code>{
+  "mcpServers": {
+    "skillz": {
+      "command": "skillz"
+    }
+  }
+}</code></pre>
+
+            <hr>
+
+            <h2>The Philosophy</h2>
+
+            <p>Skillz isn't just a technical project. It's a bet on a different future:</p>
+
+            <div class="highlight-box">
+                <p><strong>AI shouldn't be constrained by the tools we imagine today.</strong></p>
+            </div>
+
+            <p>When Claude needs a tool that doesn't exist, it shouldn't wait for a developer. It should create it, test it, refine it, and share it.</p>
+
+            <p>This is what autonomous AI development looks like. Not replacing developers, but amplifying them. A thousand tools, born from conversation.</p>
+
+            <p>Anthropic gave us the protocol. I'm just exploring what happens when you let AI extend it.</p>
+
+            <div class="cta-section">
+                <h2>Try Skillz Today</h2>
+                <p>Let your AI build its own tools. No deployments. No restarts. Just ask.</p>
+                <div class="cta-buttons">
+                    <a href="https://github.com/Algiras/skillz" class="btn btn-primary" target="_blank">
+                        ⭐ Star on GitHub
+                    </a>
+                    <a href="https://crates.io/crates/skillz" class="btn btn-secondary" target="_blank">
+                        📦 crates.io
+                    </a>
+                    <a href="https://buymeacoffee.com/algiras" class="btn btn-secondary" target="_blank">
+                        ☕ Buy Me a Coffee
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="article-footer">
+            <div class="author-card">
+                <div class="author-avatar">👨‍💻</div>
+                <div class="author-info">
+                    <div class="author-name">Algimantas Krasauskas</div>
+                    <div class="author-bio">Building tools for AI-powered development</div>
+                </div>
+            </div>
+            
+            <div class="share-links">
+                <a href="https://www.linkedin.com/in/asimplek/" class="share-link" target="_blank">LinkedIn</a>
+                <a href="https://github.com/Algiras/skillz" class="share-link" target="_blank">GitHub</a>
+            </div>
+        </div>
+    </article>
+</body>
+
+</html>
+
