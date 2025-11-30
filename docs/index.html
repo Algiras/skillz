@@ -877,7 +877,167 @@ cargo install skillz</code></pre>
         </div>
     </section>
 
+
+    <section class="architecture" style="padding: 6rem 0;">
+        <div class="container">
+            <div class="section-title">
+                <h2>🏗️ Architecture & Flows</h2>
+                <p>Understanding how Skillz connects all the pieces</p>
+            </div>
+
+            <div class="diagram-container">
+                <img src="architecture-flow.png" alt="Skillz Architecture Diagram"
+                    style="width: 100%; border-radius: 12px;">
+            </div>
+
+            <div style="margin-top: 4rem;">
+                <h3 style="text-align: center; margin-bottom: 3rem; font-size: 1.8rem;">📊 Key Flows Explained</h3>
+
+                <div style="display: grid; gap: 2rem; max-width: 1000px; margin: 0 auto;">
+
+                    <!-- Flow 1: Building Tools -->
+                    <div
+                        style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 2rem;">
+                        <h4
+                            style="color: var(--accent-secondary); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.5rem;">🔨</span>
+                            <span>1. Building & Registering Tools</span>
+                        </h4>
+                        <div style="color: var(--text-secondary); line-height: 1.8;">
+                            <p><strong style="color: var(--text-primary);">WASM Tools:</strong> AI sends Rust code →
+                                Skillz compiles to WebAssembly → Tool registered in Tool Registry → Available
+                                immediately</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Script
+                                    Tools:</strong> AI sends Python/Node.js code → Skillz creates tool directory with
+                                dependencies → Registers in Tool Registry → Ready to execute</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Pipelines:</strong>
+                                AI defines tool chain → Skillz creates pipeline tool → Automatically handles variable
+                                substitution → Executes tools in sequence</p>
+                        </div>
+                    </div>
+
+                    <!-- Flow 2: Executing Tools -->
+                    <div
+                        style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 2rem;">
+                        <h4
+                            style="color: var(--accent-secondary); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.5rem;">⚡</span>
+                            <span>2. Tool Execution Flow</span>
+                        </h4>
+                        <div style="color: var(--text-secondary); line-height: 1.8;">
+                            <p><strong style="color: var(--text-primary);">Request:</strong> MCP Client calls tool →
+                                Skillz validates & prepares context → Runtime Engine executes</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">WASM:</strong>
+                                Loaded in WASI sandbox → Direct memory access → Fast execution → Returns result</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Script:</strong>
+                                Process spawned → JSON-RPC over stdin/stdout → Can call back to server → Returns result
+                            </p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Response:</strong>
+                                Result formatted → Progress/logs included → Sent to MCP client</p>
+                        </div>
+                    </div>
+
+                    <!-- Flow 3: Script Capabilities -->
+                    <div
+                        style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 2rem;">
+                        <h4
+                            style="color: var(--accent-secondary); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.5rem;">🔗</span>
+                            <span>3. Script Tool Capabilities (Bidirectional)</span>
+                        </h4>
+                        <div style="color: var(--text-secondary); line-height: 1.8;">
+                            <p><strong style="color: var(--text-primary);">Memory API:</strong> Script sends
+                                <code>memory/set</code> → Server stores in libSQL → Script sends <code>memory/get</code>
+                                → Server retrieves → TTL support</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Resources
+                                    API:</strong> Script sends <code>resources/list</code> → Server returns available
+                                resources → Script sends <code>resources/read</code> → Server returns content</p>
+                            <p style="margin-top: 1rem;"><strong
+                                    style="color: var(--text-primary);">Elicitation:</strong> Script needs user input →
+                                Sends <code>elicitation/create</code> → Server forwards to MCP client → User responds →
+                                Script receives answer</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Sampling:</strong>
+                                Script needs LLM completion → Sends <code>sampling/createMessage</code> → Server
+                                forwards to MCP client → LLM responds → Script receives completion</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Tool
+                                    Calling:</strong> Script can call other Skillz tools → Sends <code>tools/call</code>
+                                → Server executes target tool → Returns result to caller</p>
+                        </div>
+                    </div>
+
+                    <!-- Flow 4: Hot Reload -->
+                    <div
+                        style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 2rem;">
+                        <h4
+                            style="color: var(--accent-secondary); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.5rem;">🔥</span>
+                            <span>4. Hot Reload Flow (--hot-reload)</span>
+                        </h4>
+                        <div style="color: var(--text-secondary); line-height: 1.8;">
+                            <p><strong style="color: var(--text-primary);">Watch:</strong> File watcher monitors tools
+                                directory → Detects changes to tool files</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Reload:</strong>
+                                Tool removed from registry → Reloaded from disk → Re-registered</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Notify:</strong>
+                                MCP notification sent to clients → <code>tools/list_changed</code> →
+                                <code>resources/updated</code> for subscribed tools</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Zero
+                                    Downtime:</strong> Other tools continue working → No server restart needed</p>
+                        </div>
+                    </div>
+
+                    <!-- Flow 5: Versioning -->
+                    <div
+                        style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 2rem;">
+                        <h4
+                            style="color: var(--accent-secondary); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.5rem;">📦</span>
+                            <span>5. Versioning & Rollback Flow</span>
+                        </h4>
+                        <div style="color: var(--text-secondary); line-height: 1.8;">
+                            <p><strong style="color: var(--text-primary);">Auto-Backup:</strong> Tool updated → Current
+                                version backed up to <code>.versions/</code> → Timestamp added</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">List
+                                    Versions:</strong> Use <code>version</code> tool with <code>action: "list"</code> →
+                                Returns all versions with timestamps</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Rollback:</strong>
+                                Use <code>version</code> tool with <code>action: "rollback"</code> → Restores selected
+                                version → Current becomes backup</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">History:</strong>
+                                All versions preserved → Can rollback multiple times → Full version audit trail</p>
+                        </div>
+                    </div>
+
+                    <!-- Flow 6: HTTP/SSE Transport -->
+                    <div
+                        style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 2rem;">
+                        <h4
+                            style="color: var(--accent-secondary); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.5rem;">🌐</span>
+                            <span>6. HTTP/SSE Transport (--transport http)</span>
+                        </h4>
+                        <div style="color: var(--text-secondary); line-height: 1.8;">
+                            <p><strong style="color: var(--text-primary);">HTTP Server:</strong> Skillz starts HTTP
+                                server → Accepts connections from web clients</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">SSE
+                                    Stream:</strong> Client connects to <code>/sse</code> → Server sends events →
+                                Real-time notifications</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Message
+                                    Endpoint:</strong> Client posts JSON-RPC to <code>/message</code> → Server processes
+                                → Response sent via SSE</p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Multiple
+                                    Clients:</strong> Each client gets own SSE connection → Isolated sessions →
+                                Concurrent execution</p>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </section>
+
     <section class="features" style="padding: 4rem 0; background: var(--bg-secondary);">
+
         <div class="container">
             <div class="section-title" style="margin-bottom: 3rem;">
                 <h2>🔧 Configuration</h2>
