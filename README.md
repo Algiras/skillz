@@ -84,6 +84,8 @@ rustup target add wasm32-wasip1
 cargo install skillz
 ```
 
+> **⚠️ Important**: Make sure `~/.cargo/bin` is in your PATH so your editor can find the `skillz` executable.
+
 **Or build from source:**
 
 ```bash
