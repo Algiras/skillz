@@ -567,7 +567,7 @@ impl AppState {
             client_caps: Arc::new(RwLock::new(McpClientCapabilities::default())),
             subscriptions: Arc::new(RwLock::new(std::collections::HashSet::new())),
             client_manager,
-            prompt_registry: prompts::PromptRegistry::new(),
+            prompt_registry: prompts::PromptRegistry::new_with_defaults(),
         }
     }
 
