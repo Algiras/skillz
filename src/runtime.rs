@@ -7,8 +7,10 @@ use std::process::{Command, Stdio};
 use wasmtime::{Engine, Linker, Module, Store};
 use wasmtime_wasi::preview1::{self, WasiP1Ctx};
 use wasmtime_wasi::{pipe::MemoryOutputPipe, WasiCtxBuilder};
+use std::sync::Arc;
 
 use crate::registry::{ToolConfig, ToolType};
+use crate::client::McpClientManager;
 
 // ==================== Sandbox Configuration ====================
 
@@ -576,6 +578,8 @@ pub struct ToolRuntime {
     tool_call_handler: Option<ToolCallHandler>,
     /// Handler for stream chunks (partial results)
     stream_handler: Option<StreamHandler>,
+    /// Manager for external MCP clients
+    client_manager: Option<Arc<McpClientManager>>,
 }
 
 impl ToolRuntime {
@@ -609,6 +613,7 @@ impl ToolRuntime {
             resource_read_handler: None,
             tool_call_handler: None,
             stream_handler: None,
+            client_manager: None,
         })
     }
 
@@ -629,6 +634,7 @@ impl ToolRuntime {
             resource_read_handler: None,
             tool_call_handler: None,
             stream_handler: None,
+            client_manager: None,
         })
     }
 
@@ -689,6 +695,12 @@ impl ToolRuntime {
         self
     }
 
+    /// Set client manager (for external tools)
+    pub fn with_client_manager(mut self, manager: Arc<McpClientManager>) -> Self {
+        self.client_manager = Some(manager);
+        self
+    }
+
     /// Update capabilities (for setting actual MCP client capabilities at runtime)
     pub fn update_capabilities(&mut self, caps: ClientCapabilities) {
         self.context.capabilities = caps;
@@ -725,6 +737,30 @@ impl ToolRuntime {
             }
             ToolType::Pipeline => {
                 anyhow::bail!("Pipeline tools must be executed via call_pipeline")
+            }
+            ToolType::Mcp => {
+                if let Some(manager) = &self.client_manager {
+                    if let Some(server_id) = &config.server_id {
+                        if let Some(remote_name) = &config.remote_name {
+                            // We need async here, but call_tool is sync (blocking)
+                            // We can use block_on
+                            let handle = tokio::runtime::Handle::current();
+                            let manager = manager.clone();
+                            let server_id = server_id.clone();
+                            let remote_name = remote_name.clone();
+                            let args = args.clone();
+                            
+                            return handle.block_on(async move {
+                                if let Some(client) = manager.get_client(&server_id).await {
+                                    client.call_tool(&remote_name, args).await
+                                } else {
+                                    anyhow::bail!("Client {} not found", server_id)
+                                }
+                            });
+                        }
+                    }
+                }
+                anyhow::bail!("External tool execution failed: missing client manager or config")
             }
         }
     }

@@ -16,6 +16,8 @@ pub enum ToolType {
     Script,
     /// Pipeline - chains other tools together
     Pipeline,
+    /// MCP server - external MCP server with namespaced tools
+    Mcp,
 }
 
 /// Tool annotations - hints about tool behavior for clients
@@ -111,6 +113,16 @@ pub struct PipelineStep {
     pub condition: Option<String>,
 }
 
+/// Configuration for an external MCP server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
 /// Tool manifest - stored as manifest.json in each tool's directory
 /// This is the shareable format that people can copy between installations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +161,9 @@ pub struct ToolManifest {
     /// For pipeline tools: the steps to execute
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pipeline_steps: Vec<PipelineStep>,
+    /// For external MCP servers: connection configuration
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_server: Option<McpServerConfig>,
     /// Tool author (optional, for sharing)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
@@ -167,6 +182,13 @@ pub struct ToolManifest {
     /// When the tool was last updated (ISO 8601)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    /// Whether the tool is disabled (e.g., failed to start)
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub disabled: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn default_version() -> String {
@@ -189,12 +211,14 @@ impl ToolManifest {
             dependencies: vec![],
             wasm_dependencies: vec![],
             pipeline_steps: vec![],
+            mcp_server: None,
             author: None,
             license: None,
             repository: None,
             tags: vec![],
             created_at: Some(now.clone()),
             updated_at: Some(now),
+            disabled: false,
         }
     }
 
@@ -221,6 +245,13 @@ pub struct ToolConfig {
     pub env_path: Option<PathBuf>,
     /// Whether dependencies have been installed
     pub deps_installed: bool,
+    /// ID of the external server (for External tools)
+    pub server_id: Option<String>,
+    /// Original name on the external server (for External tools)
+    pub remote_name: Option<String>,
+    /// Namespace for external tools (e.g., "memo", "github")
+    /// All tools from this server are exposed as {namespace}_{tool_name}
+    pub namespace: Option<String>,
 }
 
 impl ToolConfig {
@@ -259,6 +290,9 @@ impl ToolConfig {
     }
     pub fn pipeline_steps(&self) -> &[PipelineStep] {
         &self.manifest.pipeline_steps
+    }
+    pub fn mcp_server(&self) -> Option<&McpServerConfig> {
+        self.manifest.mcp_server.as_ref()
     }
 }
 
@@ -383,6 +417,10 @@ impl ToolRegistry {
                 // Pipelines don't have WASM or script files
                 (PathBuf::new(), PathBuf::new())
             }
+            ToolType::Mcp => {
+                // External tools don't have local files
+                (PathBuf::new(), PathBuf::new())
+            }
         };
 
         // Check for environment directory
@@ -396,6 +434,9 @@ impl ToolRegistry {
             script_path,
             env_path: if env_exists { Some(env_path) } else { None },
             deps_installed: env_exists,
+            server_id: None,
+            remote_name: None,
+            namespace: None,
         })
     }
 
@@ -473,12 +514,14 @@ impl ToolRegistry {
                 dependencies: old.dependencies,
                 wasm_dependencies: vec![],
                 pipeline_steps: vec![],
+                mcp_server: None,
                 author: None,
                 license: None,
                 repository: None,
                 tags: vec![],
                 created_at: Some(chrono_now()),
                 updated_at: Some(chrono_now()),
+                disabled: false,
             };
 
             // Save manifest
@@ -507,6 +550,9 @@ impl ToolRegistry {
                 ToolType::Pipeline => {
                     // Pipelines don't have files to migrate
                 }
+                ToolType::Mcp => {
+                    // External tools didn't exist in old format
+                }
             }
 
             migrated += 1;
@@ -534,6 +580,7 @@ impl ToolRegistry {
             ToolType::Wasm => self.register_wasm_tool(manifest, code, ""),
             ToolType::Script => self.register_script_tool(manifest, code),
             ToolType::Pipeline => self.register_pipeline_tool(manifest),
+            ToolType::Mcp => self.register_mcp_server_tool(manifest),
         }
     }
 
@@ -577,6 +624,9 @@ impl ToolRegistry {
             script_path: PathBuf::new(),
             env_path: None,
             deps_installed: false,
+            server_id: None,
+            remote_name: None,
+            namespace: None,
         };
 
         // Update in-memory cache
@@ -647,6 +697,9 @@ impl ToolRegistry {
             script_path,
             env_path: None,
             deps_installed: false,
+            server_id: None,
+            remote_name: None,
+            namespace: None,
         };
 
         // Update in-memory cache
@@ -682,11 +735,80 @@ impl ToolRegistry {
             script_path: PathBuf::new(),
             env_path: None,
             deps_installed: true, // Pipelines don't need dependency installation
+            server_id: None,
+            remote_name: None,
+            namespace: None,
         };
 
         // Update in-memory cache
         let mut tools = self.tools.write().unwrap();
         tools.insert(config.manifest.name.clone(), config.clone());
+
+        Ok(config)
+    }
+
+    /// Register an external MCP server tool (persisted)
+    fn register_mcp_server_tool(&self, mut manifest: ToolManifest) -> Result<ToolConfig> {
+        // Backup existing version if updating
+        if let Some(old_version) = self.backup_version(&manifest.name)? {
+            // Auto-increment version if same version
+            if manifest.version == old_version {
+                manifest.version = Self::increment_version(&manifest.version);
+                eprintln!("📈 Auto-incremented version to {}", manifest.version);
+            }
+        }
+        manifest.updated_at = Some(chrono_now());
+
+        let tool_dir = self.storage_dir.join(&manifest.name);
+        fs::create_dir_all(&tool_dir)?;
+
+        // Save manifest
+        let manifest_json = serde_json::to_string_pretty(&manifest)?;
+        fs::write(tool_dir.join("manifest.json"), manifest_json)?;
+
+        let config = ToolConfig {
+            manifest,
+            tool_dir,
+            wasm_path: PathBuf::new(),
+            script_path: PathBuf::new(),
+            env_path: None,
+            deps_installed: true,
+            server_id: None,
+            remote_name: None,
+            namespace: None,
+        };
+
+        // Update in-memory cache
+        let mut tools = self.tools.write().unwrap();
+        tools.insert(config.manifest.name.clone(), config.clone());
+
+        Ok(config)
+    }
+
+    /// Register an external tool (in-memory only)
+    /// The namespace is used to prefix all tool names from this server (e.g., "memo" -> "memo_search")
+    pub fn register_external_tool(
+        &self,
+        manifest: ToolManifest,
+        server_id: String,
+        remote_name: String,
+        namespace: String,
+    ) -> Result<ToolConfig> {
+        let config = ToolConfig {
+            manifest: manifest.clone(),
+            tool_dir: PathBuf::new(), // Virtual
+            wasm_path: PathBuf::new(),
+            script_path: PathBuf::new(),
+            env_path: None,
+            deps_installed: true,
+            server_id: Some(server_id),
+            remote_name: Some(remote_name),
+            namespace: Some(namespace),
+        };
+
+        // Update in-memory cache
+        let mut tools = self.tools.write().unwrap();
+        tools.insert(manifest.name.clone(), config.clone());
 
         Ok(config)
     }
@@ -757,6 +879,47 @@ impl ToolRegistry {
             Ok(true)
         } else {
             Ok(false)
+        }
+    }
+
+    /// Disable a tool (mark it as disabled in manifest and memory)
+    /// Used when a tool fails to start during background initialization
+    pub fn disable_tool(&self, name: &str) -> Result<()> {
+        let mut tools = self.tools.write().unwrap();
+        if let Some(config) = tools.get_mut(name) {
+            config.manifest.disabled = true;
+            
+            // Update the manifest file on disk
+            let manifest_path = config.tool_dir.join("manifest.json");
+            if manifest_path.exists() {
+                let json = serde_json::to_string_pretty(&config.manifest)?;
+                fs::write(&manifest_path, json)?;
+            }
+            
+            eprintln!("Disabled tool: {}", name);
+            Ok(())
+        } else {
+            anyhow::bail!("Tool not found: {}", name)
+        }
+    }
+
+    /// Enable a previously disabled tool
+    pub fn enable_tool(&self, name: &str) -> Result<()> {
+        let mut tools = self.tools.write().unwrap();
+        if let Some(config) = tools.get_mut(name) {
+            config.manifest.disabled = false;
+            
+            // Update the manifest file on disk
+            let manifest_path = config.tool_dir.join("manifest.json");
+            if manifest_path.exists() {
+                let json = serde_json::to_string_pretty(&config.manifest)?;
+                fs::write(&manifest_path, json)?;
+            }
+            
+            eprintln!("Enabled tool: {}", name);
+            Ok(())
+        } else {
+            anyhow::bail!("Tool not found: {}", name)
         }
     }
 
@@ -837,6 +1000,9 @@ impl ToolRegistry {
             }
             ToolType::Pipeline => {
                 // Pipeline is just the manifest, already copied
+            }
+            ToolType::Mcp => {
+                // External tools are config-based, no files to backup
             }
         }
 
@@ -934,6 +1100,9 @@ impl ToolRegistry {
             }
             ToolType::Pipeline => {
                 // Pipeline is just the manifest, already copied
+            }
+            ToolType::Mcp => {
+                // External tools are config-based
             }
         }
 

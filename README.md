@@ -190,6 +190,7 @@ curl -X POST http://localhost:8080/message \
 | 🦀 **WASM Tools** | Compile Rust → WebAssembly at runtime |
 | 📦 **Rust Crates** | Add serde, regex, anyhow, etc. to WASM tools! |
 | 📜 **Script Tools** | Python, Node.js, Ruby, Bash, or any language |
+| 🔌 **MCP Integration** | Import external stdio MCP servers, expose tools under namespaces |
 | 🏷️ **Tool Annotations** | Hints for clients (readOnly, destructive, idempotent) |
 | ⚡ **Code Execution** | Compose multiple tools via code (98% token savings!) |
 | 📦 **Dependencies** | Auto-install pip/npm/cargo packages per tool |
@@ -222,10 +223,11 @@ curl -X POST http://localhost:8080/message \
 |------|-------------|
 | `build_tool` | Compile Rust code → WASM tool (with crate dependencies) |
 | `register_script` | Register script tool (Python, Node.js, etc.) with deps |
-| `call_tool` | Execute any tool (WASM, Script, or Pipeline) |
+| `call_tool` | Execute any tool (WASM, Script, Pipeline, or MCP) |
 | `list_tools` | List all available tools |
 | `delete_tool` | Remove a tool and clean up |
 | `import_tool` | Import tools from Git repos or GitHub Gists |
+| `import_mcp` | Register external MCP servers under a namespace |
 | `execute_code` | Run code that composes multiple tools |
 | `pipeline` | Create, list, delete pipeline tools (action-based) |
 | `memory` | Persistent storage for tools (store, get, list, delete, stats) |
@@ -253,6 +255,35 @@ build_tool(
   }",
   annotations: {"readOnlyHint": true}
 )
+```
+
+### 🔌 Import an External MCP Server
+
+```python
+# Register a stdio MCP server - all its tools become available under a namespace
+import_mcp(
+  name: "time",
+  command: "uvx",
+  args: ["mcp-server-time"],
+  description: "Time utilities from MCP server"
+)
+
+# Now use its tools with the namespace prefix
+call_tool(tool_name: "time_get_current_time", arguments: {"timezone": "UTC"})
+
+# Use MCP tools in pipelines!
+pipeline(
+  action: "create",
+  name: "world_clock",
+  steps: [
+    { name: "ny", tool: "time_get_current_time", args: { timezone: "America/New_York" } },
+    { name: "london", tool: "time_get_current_time", args: { timezone: "Europe/London" } },
+    { tool: "word_counter", args: { text: "NY: $ny.datetime, London: $london.datetime" } }
+  ]
+)
+```
+
+> **Note**: Only **stdio** MCP servers are supported (command + args). HTTP/SSE servers are not yet supported.
 ```
 
 > **🤖 For LLMs & Advanced Users**  

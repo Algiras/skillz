@@ -264,6 +264,47 @@ import_tool(
 )
 ```
 
+### 🔌 Import External MCP Servers
+
+```python
+# Register a stdio MCP server under a namespace
+# All tools from the server become available as {namespace}_{tool_name}
+import_mcp(
+  name: "time",           # Namespace prefix for tools
+  command: "uvx",         # Command to run
+  args: ["mcp-server-time"],
+  description: "Time server",
+  env: {"TZ": "UTC"}      # Optional environment variables
+)
+
+# Tools are now available:
+# - time_get_current_time
+# - time_convert_time
+
+# Call MCP tools like any other tool
+call_tool(tool_name: "time_get_current_time", arguments: {"timezone": "UTC"})
+
+# Use in pipelines
+pipeline(
+  action: "create",
+  name: "world_clock",
+  steps: [
+    { name: "ny", tool: "time_get_current_time", args: { timezone: "America/New_York" } },
+    { name: "tokyo", tool: "time_get_current_time", args: { timezone: "Asia/Tokyo" } }
+  ]
+)
+```
+
+**Features:**
+- Parallel startup with 30s timeout per server
+- Failed servers are auto-disabled (won't block next startup)
+- Duplicate config detection (same command+args)
+- Use `overwrite: true` to re-enable disabled servers
+
+> **Note**: Only stdio MCP servers are supported (command + args).
+
+</details>
+
 ### ⛓️ Create a Pipeline (Chain Tools)
 
 ```yaml
