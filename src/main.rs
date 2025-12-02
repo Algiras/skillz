@@ -4,6 +4,7 @@ mod config;
 mod importer;
 mod memory;
 mod pipeline;
+mod prompts;
 mod registry;
 mod runtime;
 mod watcher;
@@ -15,11 +16,12 @@ use rmcp::schemars::JsonSchema;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        AnnotateAble, CancelledNotificationParam, ListResourceTemplatesResult, ListResourcesResult,
-        LoggingLevel, LoggingMessageNotificationParam, PaginatedRequestParam,
-        ProgressNotificationParam, RawResource, RawResourceTemplate, ReadResourceRequestParam,
-        ReadResourceResult, ResourceContents, ResourceUpdatedNotificationParam, ServerCapabilities,
-        ServerInfo, SubscribeRequestParam, UnsubscribeRequestParam,
+        AnnotateAble, CancelledNotificationParam, GetPromptRequestParam, GetPromptResult,
+        ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, LoggingLevel,
+        LoggingMessageNotificationParam, PaginatedRequestParam, ProgressNotificationParam,
+        RawResource, RawResourceTemplate, ReadResourceRequestParam, ReadResourceResult,
+        ResourceContents, ResourceUpdatedNotificationParam, ServerCapabilities, ServerInfo,
+        SubscribeRequestParam, UnsubscribeRequestParam,
     },
     service::{NotificationContext, RequestContext},
     tool, tool_handler, tool_router,
@@ -105,6 +107,8 @@ struct AppState {
     subscriptions: SharedSubscriptions,
     /// Manager for external MCP clients
     client_manager: Arc<client::McpClientManager>,
+    /// Prompt registry for built-in prompts
+    prompt_registry: prompts::PromptRegistry,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -563,6 +567,7 @@ impl AppState {
             client_caps: Arc::new(RwLock::new(McpClientCapabilities::default())),
             subscriptions: Arc::new(RwLock::new(std::collections::HashSet::new())),
             client_manager,
+            prompt_registry: prompts::PromptRegistry::new(),
         }
     }
 
@@ -1980,6 +1985,30 @@ impl ServerHandler for AppState {
         Ok(ReadResourceResult {
             contents: vec![ResourceContents::text(content, uri)],
         })
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _ctx: RequestContext<RoleServer>,
+    ) -> std::result::Result<ListPromptsResult, McpError> {
+        Ok(self.prompt_registry.list_prompts_result())
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParam,
+        _ctx: RequestContext<RoleServer>,
+    ) -> std::result::Result<GetPromptResult, McpError> {
+        // Convert serde_json::Map to HashMap<String, String>
+        let args = request.arguments.map(|map| {
+            map.into_iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+                .collect()
+        });
+        self.prompt_registry
+            .get_prompt_result(&request.name, args)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))
     }
 }
 

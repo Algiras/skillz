@@ -9,6 +9,7 @@ pub mod config;
 pub mod importer;
 pub mod memory;
 pub mod pipeline;
+pub mod prompts;
 pub mod registry;
 pub mod runtime;
 pub mod watcher;
