@@ -337,7 +337,15 @@ impl McpClientManager {
             clients: Arc::new(RwLock::new(HashMap::new())),
         }
     }
+}
 
+impl Default for McpClientManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl McpClientManager {
     pub async fn register_server(&self, id: String, config: ServerConfig) -> Result<()> {
         let client = Arc::new(McpClient::new(id.clone(), config));
         // Start in background? Or on demand?
@@ -352,6 +360,7 @@ impl McpClientManager {
         self.clients.read().await.get(id).cloned()
     }
 
+    #[allow(dead_code)]
     pub async fn list_clients(&self) -> Vec<String> {
         self.clients.read().await.keys().cloned().collect()
     }

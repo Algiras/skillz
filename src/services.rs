@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, RwLock};
 
@@ -108,7 +108,7 @@ pub struct ServiceRegistry {
 }
 
 impl ServiceRegistry {
-    pub fn new(tools_dir: &PathBuf) -> Self {
+    pub fn new(tools_dir: &Path) -> Self {
         let services_dir = tools_dir.join("services");
         std::fs::create_dir_all(&services_dir).ok();
 
@@ -153,7 +153,7 @@ impl ServiceRegistry {
             let mut defs = self.definitions.write().unwrap();
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "json") {
+                if path.extension().is_some_and(|e| e == "json") {
                     if let Ok(content) = std::fs::read_to_string(&path) {
                         if let Ok(def) = serde_json::from_str::<ServiceDefinition>(&content) {
                             defs.insert(def.name.clone(), def);

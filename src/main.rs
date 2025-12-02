@@ -3491,21 +3491,19 @@ async fn main() -> Result<()> {
         let mut success_count = 0;
         let mut fail_count = 0;
 
-        for result in results {
-            if let Ok((namespace, success, is_persisted)) = result {
-                if success {
-                    success_count += 1;
-                } else {
-                    fail_count += 1;
-                    // Mark persisted servers as disabled on failure
-                    if is_persisted {
-                        eprintln!(
-                            "[mcp] Marking {} as disabled due to startup failure",
-                            namespace
-                        );
-                        if let Err(e) = registry_for_startup.disable_tool(&namespace) {
-                            eprintln!("[mcp] Failed to disable {}: {}", namespace, e);
-                        }
+        for (namespace, success, is_persisted) in results.into_iter().flatten() {
+            if success {
+                success_count += 1;
+            } else {
+                fail_count += 1;
+                // Mark persisted servers as disabled on failure
+                if is_persisted {
+                    eprintln!(
+                        "[mcp] Marking {} as disabled due to startup failure",
+                        namespace
+                    );
+                    if let Err(e) = registry_for_startup.disable_tool(&namespace) {
+                        eprintln!("[mcp] Failed to disable {}: {}", namespace, e);
                     }
                 }
             }
