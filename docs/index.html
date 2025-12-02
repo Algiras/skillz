@@ -1163,6 +1163,11 @@ cargo install skillz</code></pre>
                     <p>Import tools from GitHub repos or Gists. Share your tools with the community!</p>
                 </div>
                 <div class="feature-card">
+                    <div class="feature-icon">🔌</div>
+                    <h3>MCP Integration</h3>
+                    <p>Import external stdio MCP servers. Tools exposed under namespaces, work in pipelines!</p>
+                </div>
+                <div class="feature-card">
                     <div class="feature-icon">🔥</div>
                     <h3>Hot Reload</h3>
                     <p>Watch tools directory for changes. Auto-reload modified tools without server restart!</p>
@@ -1198,7 +1203,7 @@ cargo install skillz</code></pre>
                     </tr>
                     <tr>
                         <td class="tool-name">call_tool</td>
-                        <td class="tool-desc">Execute any registered tool (WASM, Script, or Pipeline).</td>
+                        <td class="tool-desc">Execute any registered tool (WASM, Script, Pipeline, or MCP).</td>
                         <td><span class="tool-badge badge-core">Core</span></td>
                     </tr>
                     <tr>
@@ -1215,6 +1220,11 @@ cargo install skillz</code></pre>
                         <td class="tool-name">import_tool</td>
                         <td class="tool-desc">Import tools from Git repos or GitHub Gists.</td>
                         <td><span class="tool-badge badge-core">Core</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">import_mcp</td>
+                        <td class="tool-desc">Register external stdio MCP servers under a namespace.</td>
+                        <td><span class="tool-badge badge-new">New</span></td>
                     </tr>
                     <tr>
                         <td class="tool-name">execute_code</td>
