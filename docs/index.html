@@ -861,9 +861,11 @@ rustup target add wasm32-wasip1
 <span class="comment"># Install Skillz</span>
 cargo install skillz</code></pre>
                 </div>
-                <div style="margin-top: 1rem; padding: 1rem; background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; border-radius: 4px;">
+                <div
+                    style="margin-top: 1rem; padding: 1rem; background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; border-radius: 4px;">
                     <p style="margin: 0; font-size: 0.9rem; color: var(--text-secondary);">
-                        <strong style="color: #f59e0b;">⚠️ Important:</strong> Make sure <code>~/.cargo/bin</code> is in your PATH so your editor can find the executable.
+                        <strong style="color: #f59e0b;">⚠️ Important:</strong> Make sure <code>~/.cargo/bin</code> is in
+                        your PATH so your editor can find the executable.
                     </p>
                 </div>
             </div>
@@ -955,7 +957,8 @@ cargo install skillz</code></pre>
                         <div style="color: var(--text-secondary); line-height: 1.8;">
                             <p><strong style="color: var(--text-primary);">Memory API:</strong> Script sends
                                 <code>memory/set</code> → Server stores in libSQL → Script sends <code>memory/get</code>
-                                → Server retrieves → TTL support</p>
+                                → Server retrieves → TTL support
+                            </p>
                             <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Resources
                                     API:</strong> Script sends <code>resources/list</code> → Server returns available
                                 resources → Script sends <code>resources/read</code> → Server returns content</p>
@@ -987,7 +990,8 @@ cargo install skillz</code></pre>
                                 Tool removed from registry → Reloaded from disk → Re-registered</p>
                             <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Notify:</strong>
                                 MCP notification sent to clients → <code>tools/list_changed</code> →
-                                <code>resources/updated</code> for subscribed tools</p>
+                                <code>resources/updated</code> for subscribed tools
+                            </p>
                             <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Zero
                                     Downtime:</strong> Other tools continue working → No server restart needed</p>
                         </div>
@@ -1035,6 +1039,32 @@ cargo install skillz</code></pre>
                             <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Multiple
                                     Clients:</strong> Each client gets own SSE connection → Isolated sessions →
                                 Concurrent execution</p>
+                        </div>
+                    </div>
+
+                    <!-- Flow 7: Docker Services & Pipelines -->
+                    <div
+                        style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 2rem;">
+                        <h4
+                            style="color: var(--accent-secondary); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+                            <span style="font-size: 1.5rem;">🐳</span>
+                            <span>7. Docker Services & Pipelines</span>
+                        </h4>
+                        <div style="color: var(--text-secondary); line-height: 1.8;">
+                            <p><strong style="color: var(--text-primary);">Service Definition:</strong> Use
+                                <code>services</code> tool to define containers (Postgres, Redis, etc.) → Skillz manages
+                                lifecycle</p>
+                            <p style="margin-top: 1rem;"><strong
+                                    style="color: var(--text-primary);">Auto-Injection:</strong>
+                                Connection strings automatically injected as env vars into Tools → Seamless integration
+                            </p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Pipelines:</strong>
+                                Chain multiple tools together → Tool A output becomes Tool B input → Complex workflows
+                            </p>
+                            <p style="margin-top: 1rem;"><strong style="color: var(--text-primary);">Full
+                                    Stack:</strong>
+                                Build complete applications: DB Service + Backend Tool + Frontend Tool → All managed by
+                                Skillz</p>
                         </div>
                     </div>
 
@@ -1163,9 +1193,26 @@ cargo install skillz</code></pre>
                     <p>Import tools from GitHub repos or Gists. Share your tools with the community!</p>
                 </div>
                 <div class="feature-card">
+                    <div class="feature-icon">🔌</div>
+                    <h3>MCP Integration</h3>
+                    <p>Import external stdio MCP servers. Tools exposed under namespaces, work in pipelines!</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">💡</div>
+                    <h3>Built-in Prompts</h3>
+                    <p>6 native prompts to help create tools: create_wasm_tool, create_python_tool, create_pipeline, and
+                        more!</p>
+                </div>
+                <div class="feature-card">
                     <div class="feature-icon">🔥</div>
                     <h3>Hot Reload</h3>
                     <p>Watch tools directory for changes. Auto-reload modified tools without server restart!</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🐳</div>
+                    <h3>Docker Services</h3>
+                    <p>Define Docker services (databases, caches) that tools depend on. Auto-inject connection env vars!
+                    </p>
                 </div>
             </div>
         </div>
@@ -1198,7 +1245,7 @@ cargo install skillz</code></pre>
                     </tr>
                     <tr>
                         <td class="tool-name">call_tool</td>
-                        <td class="tool-desc">Execute any registered tool (WASM, Script, or Pipeline).</td>
+                        <td class="tool-desc">Execute any registered tool (WASM, Script, Pipeline, or MCP).</td>
                         <td><span class="tool-badge badge-core">Core</span></td>
                     </tr>
                     <tr>
@@ -1217,6 +1264,11 @@ cargo install skillz</code></pre>
                         <td><span class="tool-badge badge-core">Core</span></td>
                     </tr>
                     <tr>
+                        <td class="tool-name">import_mcp</td>
+                        <td class="tool-desc">Register external stdio MCP servers under a namespace.</td>
+                        <td><span class="tool-badge badge-new">New</span></td>
+                    </tr>
+                    <tr>
                         <td class="tool-name">execute_code</td>
                         <td class="tool-desc">Run Python/JS code that composes multiple tools. 98% token savings!</td>
                         <td><span class="tool-badge badge-core">Core</span></td>
@@ -1229,6 +1281,12 @@ cargo install skillz</code></pre>
                     <tr>
                         <td class="tool-name">memory</td>
                         <td class="tool-desc">Persistent storage for tools (action: store|get|list|delete|stats).</td>
+                        <td><span class="tool-badge badge-new">New</span></td>
+                    </tr>
+                    <tr>
+                        <td class="tool-name">services</td>
+                        <td class="tool-desc">Define & manage Docker services for tools (action:
+                            define|start|stop|list|status).</td>
                         <td><span class="tool-badge badge-new">New</span></td>
                     </tr>
                 </tbody>

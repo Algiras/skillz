@@ -1,9 +1,13 @@
 mod builder;
+mod client;
+mod config;
 mod importer;
 mod memory;
 mod pipeline;
+mod prompts;
 mod registry;
 mod runtime;
+mod services;
 mod watcher;
 
 use anyhow::Result;
@@ -13,11 +17,12 @@ use rmcp::schemars::JsonSchema;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        AnnotateAble, CancelledNotificationParam, ListResourceTemplatesResult, ListResourcesResult,
-        LoggingLevel, LoggingMessageNotificationParam, PaginatedRequestParam,
-        ProgressNotificationParam, RawResource, RawResourceTemplate, ReadResourceRequestParam,
-        ReadResourceResult, ResourceContents, ResourceUpdatedNotificationParam, ServerCapabilities,
-        ServerInfo, SubscribeRequestParam, UnsubscribeRequestParam,
+        AnnotateAble, CancelledNotificationParam, GetPromptRequestParam, GetPromptResult,
+        ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, LoggingLevel,
+        LoggingMessageNotificationParam, PaginatedRequestParam, ProgressNotificationParam,
+        RawResource, RawResourceTemplate, ReadResourceRequestParam, ReadResourceResult,
+        ResourceContents, ResourceUpdatedNotificationParam, ServerCapabilities, ServerInfo,
+        SubscribeRequestParam, UnsubscribeRequestParam,
     },
     service::{NotificationContext, RequestContext},
     tool, tool_handler, tool_router,
@@ -101,6 +106,12 @@ struct AppState {
     client_caps: SharedClientCaps,
     /// Subscribed resource URIs
     subscriptions: SharedSubscriptions,
+    /// Manager for external MCP clients
+    client_manager: Arc<client::McpClientManager>,
+    /// Prompt registry for built-in prompts
+    prompt_registry: prompts::PromptRegistry,
+    /// Service registry for Docker services
+    service_registry: services::ServiceRegistry,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -156,6 +167,9 @@ struct RegisterScriptArgs {
     /// Dependencies to install (pip packages for Python, npm packages for Node.js)
     /// Example: ["requests", "pandas"] for Python, ["axios", "lodash"] for Node.js
     dependencies: Option<Vec<String>>,
+    /// Docker services this tool requires. The services must be defined and running.
+    /// Example: ["postgres", "redis"] - tool will receive POSTGRES_HOST, REDIS_PORT, etc.
+    requires_services: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -237,6 +251,71 @@ struct PipelineStepArg {
     condition: Option<String>,
 }
 
+/// Register an external MCP server
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct RegisterMcpArgs {
+    /// Unique name/namespace for the server (e.g., "memo", "github")
+    /// All tools from this server will be exposed as {namespace}_{tool_name}
+    name: String,
+    /// Command to execute (e.g., "npx", "python3")
+    command: String,
+    /// Arguments to pass to the command
+    args: Option<Vec<String>>,
+    /// Environment variables to set
+    env: Option<std::collections::HashMap<String, String>>,
+    /// Description of the server
+    description: Option<String>,
+    /// Allow overwriting existing server
+    overwrite: Option<bool>,
+}
+
+// ==================== Services Args ====================
+
+/// Health check configuration for a Docker service
+#[derive(Clone, Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct HealthCheckArg {
+    /// Command to run inside the container (e.g., "pg_isready -U postgres")
+    cmd: String,
+    /// Interval between checks (e.g., "2s", "500ms")
+    interval: Option<String>,
+    /// Number of retries before giving up
+    retries: Option<u32>,
+    /// Timeout for each check
+    timeout: Option<String>,
+}
+
+/// Manage Docker services for tools
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ServicesArgs {
+    /// Action: 'define', 'list', 'start', 'stop', 'remove', 'logs', 'status', 'prune'
+    action: String,
+    /// Service name (required for define/start/stop/remove/logs/status)
+    name: Option<String>,
+    /// Docker image (e.g., "postgres:15", "redis:alpine") - required for define
+    image: Option<String>,
+    /// Port mappings: ["5432"] for random host port, or ["5432:5432"] for fixed
+    ports: Option<Vec<String>>,
+    /// Environment variables for the container
+    env: Option<std::collections::HashMap<String, String>>,
+    /// Volume mounts: ["data:/var/lib/data", "/host/path:/container/path"]
+    volumes: Option<Vec<String>>,
+    /// Health check configuration
+    healthcheck: Option<HealthCheckArg>,
+    /// Service description
+    description: Option<String>,
+    /// Allow overwriting existing service definition
+    overwrite: Option<bool>,
+    /// Number of log lines to tail (for logs action)
+    tail: Option<u32>,
+    /// Also remove volumes when removing service
+    remove_volumes: Option<bool>,
+    /// Also remove volumes when pruning (for prune action)
+    include_volumes: Option<bool>,
+}
+
 /// Unified pipeline management
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
@@ -276,8 +355,16 @@ impl AppState {
         registry: registry::ToolRegistry,
         mut runtime: runtime::ToolRuntime,
         memory: memory::Memory,
+        client_manager: Arc<client::McpClientManager>,
+        storage_dir: std::path::PathBuf,
     ) -> Self {
         let peer: SharedPeer = Arc::new(RwLock::new(None));
+
+        // Pass client manager to runtime
+        runtime = runtime.with_client_manager(client_manager.clone());
+
+        // Initialize service registry
+        let service_registry = services::ServiceRegistry::new(&storage_dir);
 
         // Set up logging handler that forwards to MCP peer
         let peer_for_logging = peer.clone();
@@ -535,6 +622,9 @@ impl AppState {
             peer,
             client_caps: Arc::new(RwLock::new(McpClientCapabilities::default())),
             subscriptions: Arc::new(RwLock::new(std::collections::HashSet::new())),
+            client_manager,
+            prompt_registry: prompts::PromptRegistry::new_with_defaults(),
+            service_registry,
         }
     }
 
@@ -669,6 +759,7 @@ Note: Check context.capabilities before using elicitation/sampling - not all cli
         manifest.output_schema = args.output_schema.map(registry::ToolSchema::from_value);
         manifest.annotations = args.annotations.map(registry::ToolAnnotations::from_value);
         manifest.dependencies = args.dependencies.clone().unwrap_or_default();
+        manifest.requires_services = args.requires_services.clone().unwrap_or_default();
 
         // Register the tool (this creates the directory and saves the script)
         let config = match self.registry.register_tool(manifest, args.code.as_bytes()) {
@@ -821,6 +912,17 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
             None => return format!("Error: Tool '{}' not found", args.tool_name),
         };
 
+        // Check required services and get service environment variables
+        let required_services = tool.manifest.requires_services.clone();
+        let service_env_vars = if !required_services.is_empty() {
+            match self.service_registry.check_required_services(&required_services) {
+                Ok(vars) => vars,
+                Err(e) => return e,
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
+
         let tool_args = args.arguments.unwrap_or(serde_json::json!({}));
 
         // Handle pipeline tools specially
@@ -830,6 +932,11 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
 
         let tool_config = tool.clone();
         let mut runtime = self.runtime.clone();
+        
+        // Inject service environment variables
+        for (key, value) in service_env_vars {
+            runtime.set_env_var(key, value);
+        }
 
         // Update runtime with actual MCP client capabilities
         let mcp_caps = self.get_client_caps().await;
@@ -934,8 +1041,44 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
             };
 
             // Execute the step's tool
-            let result = self
-                .runtime
+            // First, check service dependencies and get env vars
+            let step_tool = self.registry.get_tool(&step.tool);
+            let service_env_vars = if let Some(ref tool_config) = step_tool {
+                let required_services = &tool_config.manifest.requires_services;
+                if !required_services.is_empty() {
+                    match self.service_registry.check_required_services(required_services) {
+                        Ok(vars) => vars,
+                        Err(e) => {
+                            results.push(pipeline::StepResult {
+                                step_index: i,
+                                step_name: step.name.clone(),
+                                tool: step.tool.clone(),
+                                success: false,
+                                output: serde_json::json!(null),
+                                error: Some(e),
+                                duration_ms: step_start.elapsed().as_millis() as u64,
+                            });
+                            if !step.continue_on_error {
+                                pipeline_success = false;
+                                break;
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    std::collections::HashMap::new()
+                }
+            } else {
+                std::collections::HashMap::new()
+            };
+
+            // Clone runtime and inject service env vars
+            let mut step_runtime = self.runtime.clone();
+            for (key, value) in service_env_vars {
+                step_runtime.set_env_var(key, value);
+            }
+
+            let result = step_runtime
                 .call_tool_by_name(&step.tool, Some(resolved_args), &self.registry)
                 .await;
             let duration_ms = step_start.elapsed().as_millis() as u64;
@@ -1036,8 +1179,28 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
             .iter()
             .filter(|t| *t.tool_type() == ToolType::Script)
             .collect();
+        let pipeline_tools: Vec<_> = tools
+            .iter()
+            .filter(|t| *t.tool_type() == ToolType::Pipeline)
+            .collect();
+        let external_tools: Vec<_> = tools
+            .iter()
+            .filter(|t| *t.tool_type() == ToolType::Mcp)
+            .collect();
+        let mcp_servers: Vec<_> = tools
+            .iter()
+            .filter(|t| t.mcp_server().is_some())
+            .collect();
 
         let mut output = format!("📦 Available Tools ({} total)\n\n", tools.len());
+
+        if !mcp_servers.is_empty() {
+            output.push_str(&format!("### 🌐 External MCP Servers ({})\n\n", mcp_servers.len()));
+            for tool in &mcp_servers {
+                output.push_str(&format!("• **{}** - {}\n", tool.name(), tool.description()));
+            }
+            output.push('\n');
+        }
 
         if !wasm_tools.is_empty() {
             output.push_str(&format!("### 🦀 WASM Tools ({})\n\n", wasm_tools.len()));
@@ -1059,6 +1222,41 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
                 ));
             }
             output.push('\n');
+        }
+
+        if !pipeline_tools.is_empty() {
+            output.push_str(&format!("### ⛓️ Pipeline Tools ({})\n\n", pipeline_tools.len()));
+            for tool in pipeline_tools {
+                output.push_str(&format!("• **{}** - {}\n", tool.name(), tool.description()));
+            }
+            output.push('\n');
+        }
+
+        if !external_tools.is_empty() {
+            // Group external tools by namespace
+            let mut by_namespace: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
+            for tool in &external_tools {
+                if tool.mcp_server().is_none() {
+                    let ns = tool.namespace.clone().unwrap_or_else(|| "unknown".to_string());
+                    by_namespace.entry(ns).or_default().push(tool);
+                }
+            }
+
+            if !by_namespace.is_empty() {
+                output.push_str(&format!("### 🔗 Proxied Tools ({})\n\n", external_tools.len() - mcp_servers.len()));
+                for (namespace, ns_tools) in by_namespace.iter() {
+                    output.push_str(&format!("**[{}]** ({} tools)\n", namespace, ns_tools.len()));
+                    for tool in ns_tools {
+                        // Strip the namespace prefix for cleaner display
+                        let short_name = tool.name().strip_prefix(&format!("{}_", namespace))
+                            .unwrap_or(tool.name());
+                        output.push_str(&format!("  • `{}` - {}\n", short_name, 
+                            tool.description().strip_prefix(&format!("[{}] ", namespace))
+                                .unwrap_or(tool.description())));
+                    }
+                }
+                output.push('\n');
+            }
         }
 
         output.push_str("\n💡 Use `call_tool(tool_name: \"...\")` to execute any tool.");
@@ -1206,6 +1404,323 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
                     e
                 )
             }
+        }
+    }
+
+    // ==================== EXTERNAL MCP SERVERS ====================
+
+    #[tool(
+        description = r#"Register an external MCP server. All tools from the server will be exposed under a namespace.
+
+The namespace is used to prefix all tool names from this server.
+For example, if you register a server with namespace "memo", its tools will be available as:
+- memo_search
+- memo_memory
+- memo_analyze
+etc.
+
+Example:
+import_mcp(name: "memo", command: "npx", args: ["-y", "@anthropic/memo-server"])
+import_mcp(name: "github", command: "uvx", args: ["mcp-server-github"])"#
+    )]
+    async fn import_mcp(&self, Parameters(args): Parameters<RegisterMcpArgs>) -> String {
+        let namespace = args.name.clone();
+        let new_args = args.args.clone().unwrap_or_default();
+        
+        // Check if namespace already exists (either as tool or server)
+        let existing = self.registry.get_tool(&namespace);
+        if existing.is_some() && !args.overwrite.unwrap_or(false) {
+            let disabled_msg = if existing.as_ref().map(|t| t.manifest.disabled).unwrap_or(false) {
+                " (currently disabled - use overwrite: true to re-enable)"
+            } else {
+                ""
+            };
+            return format!(
+                "❌ A tool or server with namespace '{}' already exists{}. Use overwrite: true to replace it.",
+                namespace, disabled_msg
+            );
+        }
+        
+        // Check if another MCP server with the same command+args already exists
+        for tool in self.registry.list_tools() {
+            if let Some(mcp) = tool.mcp_server() {
+                if mcp.command == args.command && mcp.args == new_args && tool.name() != namespace {
+                    return format!(
+                        "❌ An MCP server with the same config already exists under namespace '{}'. \
+                        Use that namespace or provide different args.",
+                        tool.name()
+                    );
+                }
+            }
+        }
+
+        // If re-registering an existing tool, enable it
+        if existing.is_some() {
+            let _ = self.registry.enable_tool(&namespace);
+        }
+
+        // Create MCP server config
+        let mcp_config = registry::McpServerConfig {
+            command: args.command.clone(),
+            args: new_args.clone(),
+            env: args.env.clone().unwrap_or_default(),
+        };
+
+        // Create manifest for the MCP server
+        // MCP type only has mcp_server coordinates, no input_schema or annotations
+        let mut manifest = registry::ToolManifest::new(
+            namespace.clone(),
+            args.description.clone().unwrap_or_else(|| format!("External MCP server: {}", namespace)),
+            registry::ToolType::Mcp,
+        );
+        manifest.mcp_server = Some(mcp_config);
+        // Clear input_schema for MCP type (not needed)
+        manifest.input_schema = registry::ToolSchema::default();
+
+        // Register the server manifest (persists to disk)
+        if let Err(e) = self.registry.register_tool(manifest, &[]) {
+            return format!("❌ Failed to persist MCP server config: {}", e);
+        }
+
+        // Create server config for client manager
+        let server_config = config::ServerConfig {
+            command: args.command.clone(),
+            args: new_args,
+            env: args.env.clone().unwrap_or_default(),
+            disabled: false,
+        };
+
+        // Register and start the server
+        if let Err(e) = self.client_manager.register_server(namespace.clone(), server_config).await {
+            return format!("❌ Failed to start MCP server: {}", e);
+        }
+
+        // Wait a moment for connection to establish
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        // Discover tools from the server
+        let mut discovered_tools = Vec::new();
+        if let Some(client) = self.client_manager.get_client(&namespace).await {
+            match client.list_tools().await {
+                Ok(tools) => {
+                    for tool in tools {
+                        let remote_name = tool.name.clone();
+                        let local_name = format!("{}_{}", namespace, remote_name);
+                        let mut manifest = tool;
+                        manifest.name = local_name.clone();
+                        manifest.description = format!("[{}] {}", namespace, manifest.description);
+                        
+                        if let Err(e) = self.registry.register_external_tool(manifest, namespace.clone(), remote_name.clone(), namespace.clone()) {
+                            eprintln!("Failed to register external tool {}: {}", local_name, e);
+                        } else {
+                            discovered_tools.push(local_name);
+                        }
+                    }
+                }
+                Err(e) => {
+                    return format!(
+                        "⚠️ Server started but failed to discover tools: {}\n\nThe server config has been saved. Try restarting Skillz.",
+                        e
+                    );
+                }
+            }
+        }
+
+        if discovered_tools.is_empty() {
+            format!(
+                "✅ **MCP Server '{}' Registered**\n\n\
+                No tools discovered yet. The server may still be initializing.\n\
+                Config saved to `tools/{}/manifest.json`",
+                namespace, namespace
+            )
+        } else {
+            format!(
+                "✅ **MCP Server '{}' Registered**\n\n\
+                **Discovered {} tools:**\n{}\n\n\
+                Config saved to `tools/{}/manifest.json`\n\
+                Tools are ready to use with `call_tool(tool_name: \"...\")`",
+                namespace,
+                discovered_tools.len(),
+                discovered_tools.iter().map(|t| format!("- `{}`", t)).collect::<Vec<_>>().join("\n"),
+                namespace
+            )
+        }
+    }
+
+    // ==================== DOCKER SERVICES ====================
+
+    #[tool(
+        description = r#"Manage Docker services for tools. Define, start, stop, and manage containers that tools depend on.
+
+Actions: 'define', 'list', 'start', 'stop', 'remove', 'logs', 'status', 'prune'
+
+Define a reusable service:
+services(
+  action: "define",
+  name: "postgres",
+  image: "postgres:15",
+  ports: ["5432"],
+  env: { "POSTGRES_PASSWORD": "dev" },
+  volumes: ["postgres_data:/var/lib/postgresql/data"],
+  healthcheck: { cmd: "pg_isready -U postgres", interval: "2s", retries: 15 }
+)
+
+Then in your script tool, use requires_services: ["postgres"] to ensure it's running.
+The tool will receive POSTGRES_HOST, POSTGRES_PORT environment variables.
+
+Other actions:
+- list: Show all defined services and their status
+- start: Start a service (services(action: "start", name: "postgres"))
+- stop: Stop a service (keeps container for restart)
+- remove: Remove service definition and container (remove_volumes: true to also delete volumes)
+- logs: View logs (tail: 50 for last 50 lines)
+- status: Check if service is running/healthy
+- prune: Remove stopped containers (include_volumes: true for unused volumes)"#
+    )]
+    async fn services(&self, Parameters(args): Parameters<ServicesArgs>) -> String {
+        match args.action.as_str() {
+            "define" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for define action".to_string(),
+                };
+                let image = match &args.image {
+                    Some(i) => i.clone(),
+                    None => return "❌ Error: 'image' is required for define action".to_string(),
+                };
+
+                let healthcheck = args.healthcheck.map(|hc| services::HealthCheck {
+                    cmd: hc.cmd,
+                    interval: hc.interval.unwrap_or_else(|| "2s".to_string()),
+                    retries: hc.retries.unwrap_or(15),
+                    timeout: hc.timeout.unwrap_or_else(|| "5s".to_string()),
+                });
+
+                let def = services::ServiceDefinition {
+                    name: name.clone(),
+                    image,
+                    ports: args.ports.unwrap_or_default(),
+                    env: args.env.unwrap_or_default(),
+                    volumes: args.volumes.unwrap_or_default(),
+                    healthcheck,
+                    description: args.description,
+                    network: "skillz_services".to_string(),
+                };
+
+                match self.service_registry.define(def, args.overwrite.unwrap_or(false)) {
+                    Ok(msg) => format!("✅ {}\n\n💡 Start with: services(action: \"start\", name: \"{}\")", msg, name),
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "list" => {
+                match self.service_registry.list() {
+                    Ok(statuses) => {
+                        if statuses.is_empty() {
+                            "📦 No services defined yet.\n\n💡 Define one with:\nservices(action: \"define\", name: \"redis\", image: \"redis:alpine\", ports: [\"6379\"])".to_string()
+                        } else {
+                            let mut output = String::from("📦 **Defined Services**\n\n");
+                            for status in statuses {
+                                let icon = match status.status.as_str() {
+                                    "running" => "🟢",
+                                    "exited" | "stopped" => "🔴",
+                                    "not_created" => "⚪",
+                                    _ => "🟡",
+                                };
+                                let health = status.health.map(|h| format!(" ({})", h)).unwrap_or_default();
+                                let ports = if status.ports.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" → {}", status.ports.iter().map(|(c, h)| format!("{}:{}", h, c)).collect::<Vec<_>>().join(", "))
+                                };
+                                output.push_str(&format!("{} **{}**: {}{}{}\n", icon, status.name, status.status, health, ports));
+                            }
+                            output
+                        }
+                    }
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "start" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for start action".to_string(),
+                };
+                match self.service_registry.start(&name) {
+                    Ok(status) => {
+                        let ports = if status.ports.is_empty() {
+                            String::new()
+                        } else {
+                            format!("\n📡 Ports: {}", status.ports.iter().map(|(c, h)| format!("localhost:{}→{}", h, c)).collect::<Vec<_>>().join(", "))
+                        };
+                        let health = status.health.map(|h| format!("\n💚 Health: {}", h)).unwrap_or_default();
+                        format!("✅ Service '{}' is running{}{}", name, ports, health)
+                    }
+                    Err(e) => format!("❌ Failed to start '{}': {}", name, e),
+                }
+            }
+            "stop" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for stop action".to_string(),
+                };
+                match self.service_registry.stop(&name) {
+                    Ok(msg) => format!("⏸️ {}", msg),
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "remove" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for remove action".to_string(),
+                };
+                match self.service_registry.remove(&name, args.remove_volumes.unwrap_or(false)) {
+                    Ok(msg) => format!("🗑️ {}", msg),
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "logs" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for logs action".to_string(),
+                };
+                match self.service_registry.logs(&name, args.tail) {
+                    Ok(logs) => format!("📜 **Logs for '{}':**\n```\n{}\n```", name, logs),
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "status" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for status action".to_string(),
+                };
+                match self.service_registry.get_status(&name) {
+                    Ok(status) => {
+                        let icon = match status.status.as_str() {
+                            "running" => "🟢",
+                            "exited" | "stopped" => "🔴",
+                            "not_created" => "⚪",
+                            _ => "🟡",
+                        };
+                        let container = status.container_id.map(|id| format!("\n📦 Container: {}", id)).unwrap_or_default();
+                        let health = status.health.map(|h| format!("\n💚 Health: {}", h)).unwrap_or_default();
+                        let ports = if status.ports.is_empty() {
+                            String::new()
+                        } else {
+                            format!("\n📡 Ports: {}", status.ports.iter().map(|(c, h)| format!("localhost:{}→{}", h, c)).collect::<Vec<_>>().join(", "))
+                        };
+                        let uptime = status.uptime.map(|u| format!("\n⏱️ Started: {}", u)).unwrap_or_default();
+                        format!("{} **{}**: {}{}{}{}{}", icon, name, status.status, container, health, ports, uptime)
+                    }
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "prune" => {
+                match self.service_registry.prune(args.include_volumes.unwrap_or(false)) {
+                    Ok(msg) => format!("🧹 Pruned:\n{}", msg),
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            _ => format!("❌ Unknown action: '{}'. Use: define, list, start, stop, remove, logs, status, prune", args.action),
         }
     }
 
@@ -1692,6 +2207,7 @@ impl ServerHandler for AppState {
                 ToolType::Wasm => "🦀",
                 ToolType::Script => "📜",
                 ToolType::Pipeline => "⛓️",
+                ToolType::Mcp => "🌐",
             };
             resources.push(
                 RawResource::new(
@@ -1756,6 +2272,30 @@ impl ServerHandler for AppState {
         Ok(ReadResourceResult {
             contents: vec![ResourceContents::text(content, uri)],
         })
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _ctx: RequestContext<RoleServer>,
+    ) -> std::result::Result<ListPromptsResult, McpError> {
+        Ok(self.prompt_registry.list_prompts_result())
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParam,
+        _ctx: RequestContext<RoleServer>,
+    ) -> std::result::Result<GetPromptResult, McpError> {
+        // Convert serde_json::Map to HashMap<String, String>
+        let args = request.arguments.map(|map| {
+            map.into_iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+                .collect()
+        });
+        self.prompt_registry
+            .get_prompt_result(&request.name, args)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))
     }
 }
 
@@ -2559,6 +3099,11 @@ request = json.loads(sys.stdin.read())
                             tool.pipeline_steps().len()
                         ),
                     ),
+                    ToolType::Mcp => (
+                        "MCP",
+                        "🌐",
+                        format!("Server ID: {}", tool.server_id.as_deref().unwrap_or("unknown")),
+                    ),
                 };
                 let version_info = format!("- **Version:** {}\n", tool.manifest.version);
                 format!(
@@ -2781,6 +3326,7 @@ fn get_tool_info_static(registry: &registry::ToolRegistry, tool_name: &str) -> S
                 ToolType::Wasm => ("WASM", "🦀"),
                 ToolType::Script => ("Script", "📜"),
                 ToolType::Pipeline => ("Pipeline", "⛓️"),
+                ToolType::Mcp => ("MCP", "🌐"),
             };
             format!(
                 "# {} {} Tool: {}\n\n## Description\n{}\n\n## Details\n- **Type:** {}\n- **Version:** {}\n- **Status:** ✅ Ready to use\n\n## Usage\n```\ncall_tool(tool_name: \"{}\")\n```\n",
@@ -2820,7 +3366,151 @@ async fn main() -> Result<()> {
 
     eprintln!("Memory database initialized (with runtime integration)");
 
-    let state = AppState::new(registry, runtime, memory);
+    // Load config
+    let config_path = std::env::current_dir()?.join("skillz.toml");
+    let config = config::SkillzConfig::load(config_path).unwrap_or_default();
+
+    // Initialize client manager
+    let client_manager = Arc::new(client::McpClientManager::new());
+    
+    // Spawn MCP server startup in background (non-blocking)
+    // This prevents slow MCP servers from blocking Skillz initialization
+    // All servers start in PARALLEL with 30s timeout each
+    let cm_for_startup = client_manager.clone();
+    let registry_for_startup = registry.clone();
+    let config_servers = config.servers;
+    
+    const SERVER_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    
+    tokio::spawn(async move {
+        // Collect all servers to start
+        let mut server_tasks = Vec::new();
+        
+        // Add servers from skillz.toml (ephemeral)
+        for (id, server_config) in config_servers {
+            if !server_config.disabled {
+                let cm = cm_for_startup.clone();
+                let reg = registry_for_startup.clone();
+                let namespace = id.clone();
+                
+                server_tasks.push(tokio::spawn(async move {
+                    let result = start_single_server(&cm, &reg, namespace.clone(), server_config, SERVER_STARTUP_TIMEOUT).await;
+                    (namespace, result, false) // false = ephemeral, don't persist disable
+                }));
+            }
+        }
+
+        // Add persisted MCP servers (skip disabled ones)
+        let mcp_tools: Vec<_> = registry_for_startup.list_tools()
+            .into_iter()
+            .filter(|t| t.mcp_server().is_some() && !t.manifest.disabled)
+            .collect();
+            
+        for tool in mcp_tools {
+            if let Some(mcp_config) = tool.mcp_server() {
+                let server_config = config::ServerConfig {
+                    command: mcp_config.command.clone(),
+                    args: mcp_config.args.clone(),
+                    env: mcp_config.env.clone(),
+                    disabled: false,
+                };
+                
+                let cm = cm_for_startup.clone();
+                let reg = registry_for_startup.clone();
+                let namespace = tool.name().to_string();
+                
+                server_tasks.push(tokio::spawn(async move {
+                    let result = start_single_server(&cm, &reg, namespace.clone(), server_config, SERVER_STARTUP_TIMEOUT).await;
+                    (namespace, result, true) // true = persisted, can disable on failure
+                }));
+            }
+        }
+        
+        // Wait for all servers to start (in parallel)
+        let results = futures::future::join_all(server_tasks).await;
+        
+        let mut success_count = 0;
+        let mut fail_count = 0;
+        
+        for result in results {
+            if let Ok((namespace, success, is_persisted)) = result {
+                if success {
+                    success_count += 1;
+                } else {
+                    fail_count += 1;
+                    // Mark persisted servers as disabled on failure
+                    if is_persisted {
+                        eprintln!("[mcp] Marking {} as disabled due to startup failure", namespace);
+                        if let Err(e) = registry_for_startup.disable_tool(&namespace) {
+                            eprintln!("[mcp] Failed to disable {}: {}", namespace, e);
+                        }
+                    }
+                }
+            }
+        }
+        
+        eprintln!("[mcp] Background startup complete: {} succeeded, {} failed", success_count, fail_count);
+    });
+    
+    // Helper function for starting a single server (defined outside spawn for cleaner code)
+    async fn start_single_server(
+        cm: &client::McpClientManager,
+        registry: &registry::ToolRegistry,
+        namespace: String,
+        server_config: config::ServerConfig,
+        timeout: std::time::Duration,
+    ) -> bool {
+        eprintln!("[mcp] Starting server: {} (timeout: {}s)", namespace, timeout.as_secs());
+        
+        // Try to register with timeout
+        let result = tokio::time::timeout(
+            timeout,
+            cm.register_server(namespace.clone(), server_config)
+        ).await;
+        
+        match result {
+            Ok(Ok(())) => {
+                eprintln!("[mcp] Server {} connected, discovering tools...", namespace);
+                
+                // Try to discover tools with timeout
+                if let Some(client) = cm.get_client(&namespace).await {
+                    match tokio::time::timeout(timeout, client.list_tools()).await {
+                        Ok(Ok(tools)) => {
+                            let tool_count = tools.len();
+                            for tool in tools {
+                                let remote_name = tool.name.clone();
+                                let local_name = format!("{}_{}", namespace, remote_name);
+                                let mut manifest = tool;
+                                manifest.name = local_name.clone();
+                                manifest.description = format!("[{}] {}", namespace, manifest.description);
+                                
+                                if let Err(e) = registry.register_external_tool(manifest, namespace.clone(), remote_name, namespace.clone()) {
+                                    eprintln!("[mcp] Failed to register {}: {}", local_name, e);
+                                }
+                            }
+                            eprintln!("[mcp] ✓ Server {} ready ({} tools)", namespace, tool_count);
+                            return true;
+                        }
+                        Ok(Err(e)) => {
+                            eprintln!("[mcp] ✗ Server {} failed to list tools: {}", namespace, e);
+                        }
+                        Err(_) => {
+                            eprintln!("[mcp] ✗ Server {} timed out listing tools", namespace);
+                        }
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                eprintln!("[mcp] ✗ Server {} failed to start: {}", namespace, e);
+            }
+            Err(_) => {
+                eprintln!("[mcp] ✗ Server {} timed out during startup", namespace);
+            }
+        }
+        false
+    }
+
+    let state = AppState::new(registry, runtime, memory, client_manager, storage_dir.clone());
 
     // Start hot reload if enabled
     let _hot_reload = if cli.hot_reload {

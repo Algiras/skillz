@@ -190,9 +190,11 @@ curl -X POST http://localhost:8080/message \
 | 🦀 **WASM Tools** | Compile Rust → WebAssembly at runtime |
 | 📦 **Rust Crates** | Add serde, regex, anyhow, etc. to WASM tools! |
 | 📜 **Script Tools** | Python, Node.js, Ruby, Bash, or any language |
+| 🔌 **MCP Integration** | Import external stdio MCP servers, expose tools under namespaces |
 | 🏷️ **Tool Annotations** | Hints for clients (readOnly, destructive, idempotent) |
 | ⚡ **Code Execution** | Compose multiple tools via code (98% token savings!) |
 | 📦 **Dependencies** | Auto-install pip/npm/cargo packages per tool |
+| 🐳 **Docker Services** | Define & manage Docker services tools depend on |
 | 💾 **Persistence** | Tools survive server restarts |
 | 🔒 **Sandbox** | Optional bubblewrap/firejail/nsjail isolation |
 | 📂 **Shareable** | Each tool has its own directory with manifest.json |
@@ -213,23 +215,26 @@ curl -X POST http://localhost:8080/message \
 | 📋 **listChanged** | Hot reload emits MCP list changed notifications |
 | 🎯 **_meta Support** | Progress tokens forwarded from MCP requests |
 | ⛔ **Cancellation** | Handle cancellation requests for running tools |
+| 💡 **Built-in Prompts** | 6 native prompts for creating tools via MCP protocol |
 
 ---
 
-## 📖 Available Tools (10 Core)
+## 📖 Available Tools (11 Core)
 
 | Tool | Description |
 |------|-------------|
 | `build_tool` | Compile Rust code → WASM tool (with crate dependencies) |
 | `register_script` | Register script tool (Python, Node.js, etc.) with deps |
-| `call_tool` | Execute any tool (WASM, Script, or Pipeline) |
+| `call_tool` | Execute any tool (WASM, Script, Pipeline, or MCP) |
 | `list_tools` | List all available tools |
 | `delete_tool` | Remove a tool and clean up |
 | `import_tool` | Import tools from Git repos or GitHub Gists |
+| `import_mcp` | Register external MCP servers under a namespace |
 | `execute_code` | Run code that composes multiple tools |
 | `pipeline` | Create, list, delete pipeline tools (action-based) |
 | `memory` | Persistent storage for tools (store, get, list, delete, stats) |
 | `version` | List versions, rollback to previous, view version info |
+| `services` | Define & manage Docker services for tools |
 
 ---
 
@@ -253,6 +258,35 @@ build_tool(
   }",
   annotations: {"readOnlyHint": true}
 )
+```
+
+### 🔌 Import an External MCP Server
+
+```python
+# Register a stdio MCP server - all its tools become available under a namespace
+import_mcp(
+  name: "time",
+  command: "uvx",
+  args: ["mcp-server-time"],
+  description: "Time utilities from MCP server"
+)
+
+# Now use its tools with the namespace prefix
+call_tool(tool_name: "time_get_current_time", arguments: {"timezone": "UTC"})
+
+# Use MCP tools in pipelines!
+pipeline(
+  action: "create",
+  name: "world_clock",
+  steps: [
+    { name: "ny", tool: "time_get_current_time", args: { timezone: "America/New_York" } },
+    { name: "london", tool: "time_get_current_time", args: { timezone: "Europe/London" } },
+    { tool: "word_counter", args: { text: "NY: $ny.datetime, London: $london.datetime" } }
+  ]
+)
+```
+
+> **Note**: Only **stdio** MCP servers are supported (command + args). HTTP/SSE servers are not yet supported.
 ```
 
 > **🤖 For LLMs & Advanced Users**  
@@ -290,6 +324,96 @@ api_key = env.get("SKILLZ_OPENAI_KEY")
 ```
 
 > **Note:** Only `SKILLZ_*` vars are forwarded. Other env vars are not exposed to tools for security.
+
+---
+
+## 🐳 Docker Services
+
+Tools can declare dependencies on Docker services (databases, caches, etc.). When a tool runs, Skillz checks if required services are running and injects connection environment variables.
+
+### Define a Service
+
+```python
+services(
+  action: "define",
+  name: "postgres",
+  image: "postgres:15",
+  ports: ["5432"],
+  env: {"POSTGRES_PASSWORD": "dev"},
+  volumes: ["data:/var/lib/postgresql/data"],
+  healthcheck: {
+    cmd: "pg_isready -U postgres",
+    interval: "2s",
+    retries: 15
+  }
+)
+```
+
+### Manage Services
+
+```python
+# List all defined services
+services(action: "list")
+
+# Start a service
+services(action: "start", name: "postgres")
+
+# Check status (running, ports, health)
+services(action: "status", name: "postgres")
+
+# View logs
+services(action: "logs", name: "postgres", tail: 100)
+
+# Stop/remove services
+services(action: "stop", name: "postgres")
+services(action: "remove", name: "postgres")
+
+# Cleanup unused services
+services(action: "prune")
+```
+
+### Tools with Service Dependencies
+
+Register a tool that requires services:
+
+```python
+register_script(
+  name: "user_manager",
+  description: "Manage users in PostgreSQL",
+  interpreter: "python3",
+  requires_services: ["postgres"],  # Tool requires postgres to be running
+  dependencies: ["psycopg2-binary"],
+  code: """
+import json, sys, os
+import psycopg2
+
+request = json.loads(sys.stdin.readline())
+args = request["params"]["arguments"]
+
+# Connection details injected by Skillz
+conn = psycopg2.connect(
+    host=os.environ["POSTGRES_HOST"],  # Auto-injected
+    port=os.environ["POSTGRES_PORT"],  # Auto-injected
+    user="postgres",
+    password="dev",
+    dbname="postgres"
+)
+# ... your code
+"""
+)
+```
+
+When calling `user_manager`, Skillz will:
+1. Check if `postgres` service is running
+2. If not running, return a helpful error with fix command
+3. If running, inject `POSTGRES_HOST` and `POSTGRES_PORT` env vars
+
+### Volume Types
+
+| Type | Syntax | Description |
+|------|--------|-------------|
+| **Named** | `data:/path` | Docker-managed volume, prefixed with `skillz_` |
+| **Bind** | `/host/path:/container/path` | Mount host directory into container |
 
 ---
 

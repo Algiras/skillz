@@ -1,0 +1,13 @@
+# Skillz Configuration
+
+# Example: Connect to the filesystem MCP server
+# [servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/Users/username/Desktop"]
+# env = { "NODE_ENV" = "production" }
+
+# Example: Connect to a Python-based MCP server
+# [servers.python-tools]
+# command = "python3"
+# args = ["-m", "mcp_server_python"]
+# disabled = true
