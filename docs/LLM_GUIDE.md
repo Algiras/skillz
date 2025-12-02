@@ -354,3 +354,24 @@ for i in range(3):
 """
 )
 ```
+
+---
+
+## 💡 Built-in Prompts
+
+Skillz provides 6 native MCP prompts to help you create tools:
+
+| Prompt | Description | Required Args |
+|--------|-------------|---------------|
+| `create_wasm_tool` | Generate WASM tools from Rust | `name`, `description` |
+| `create_python_tool` | Create Python script tools | `name`, `description` |
+| `create_pipeline` | Build tool pipelines | `name`, `description`, `tools` |
+| `import_mcp_server` | Import external MCP servers | `name`, `package` |
+| `improve_tool` | Analyze and improve existing tools | `tool_name` |
+| `create_api_tool` | Create API wrapper tools | `name`, `api_url`, `description` |
+
+### Using Prompts
+
+Prompts are available via MCP's `prompts/list` and `prompts/get` endpoints. They provide structured templates with best practices for creating Skillz tools.
+
+> **Note**: VS Code GitHub Copilot doesn't currently support MCP prompts in its UI. Claude Desktop does support prompts natively.

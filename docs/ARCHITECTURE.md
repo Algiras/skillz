@@ -1,6 +1,6 @@
 # 🏗️ Skillz Architecture Documentation
 
-> **Version**: 0.6.0  
+> **Version**: 0.7.0  
 > **Last Updated**: December 2025  
 > **Total Codebase**: ~8,500 lines of Rust
 

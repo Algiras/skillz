@@ -214,6 +214,7 @@ curl -X POST http://localhost:8080/message \
 | 📋 **listChanged** | Hot reload emits MCP list changed notifications |
 | 🎯 **_meta Support** | Progress tokens forwarded from MCP requests |
 | ⛔ **Cancellation** | Handle cancellation requests for running tools |
+| 💡 **Built-in Prompts** | 6 native prompts for creating tools via MCP protocol |
 
 ---
 
