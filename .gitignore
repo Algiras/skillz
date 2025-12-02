@@ -1,4 +1,8 @@
-# Build artifacts
+# Quarto output
+_output/
+.quarto/
+
+# Rust Build artifacts
 /target/
 Cargo.lock
 
@@ -9,15 +13,29 @@ Cargo.lock
 *.swo
 *~
 
-# OS
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
 # Tools directory (runtime generated)
 /tools/
-
 # Logs
 *.log
 
 # Test artifacts
 *.wasm
+
+# LaTeX intermediates
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.xdv
