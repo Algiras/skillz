@@ -33,22 +33,25 @@ jobs:
           cp docs/index.html _site/index.html
         fi
 
-    - name: Set up Quarto
-      uses: quarto-dev/quarto-actions/setup@v2
+    - name: Download Research Paper
+      uses: dawidd6/action-download-artifact@v6
+      continue-on-error: true
       with:
-        version: pre-release
+        workflow: paper.yml
+        name: skillz-research-pdf
+        path: temp_pdf
+        if_no_artifact_found: warn
 
-    - name: Install TinyTeX
-      uses: quarto-dev/quarto-actions/tinytex@v2
-
-    - name: Render Research Paper
+    - name: Place PDF
       run: |
-        cd publication/research
-        quarto render index.qmd --to pdf
-        
-        # Move PDF to site directory
-        mkdir -p ../../_site/research
-        cp _output/index.pdf ../../_site/research/index.pdf
+        if [ -f temp_pdf/index.pdf ]; then
+          mkdir -p _site/research
+          cp temp_pdf/index.pdf _site/research/index.pdf
+          cp temp_pdf/index.pdf _site/skillz-research.pdf
+          echo "✅ PDF deployed successfully"
+        else
+          echo "⚠️ Research paper PDF not found - skipping"
+        fi
 
     - name: Upload artifact
       uses: actions/upload-pages-artifact@v3

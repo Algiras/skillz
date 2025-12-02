@@ -1,0 +1,35 @@
+name: Build Research Paper
+
+on:
+  push:
+    branches: [ main, master ]
+    paths: 
+      - 'publication/research/**'
+  workflow_dispatch:
+
+jobs:
+  build-paper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: pre-release
+
+      - name: Install TinyTeX
+        uses: quarto-dev/quarto-actions/tinytex@v2
+
+      - name: Render Research Paper
+        run: |
+          cd publication/research
+          quarto render index.qmd --to pdf
+
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: skillz-research-pdf
+          path: publication/research/_output/index.pdf
+          retention-days: 5
+
