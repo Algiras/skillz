@@ -49,6 +49,8 @@ jobs:
         # Move PDF to site directory
         mkdir -p ../../_site/research
         cp _output/index.pdf ../../_site/research/index.pdf
+        # Also copy to root for the main link
+        cp _output/index.pdf ../../_site/skillz-research.pdf
 
     - name: Upload artifact
       uses: actions/upload-pages-artifact@v3
