@@ -915,7 +915,10 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
         // Check required services and get service environment variables
         let required_services = tool.manifest.requires_services.clone();
         let service_env_vars = if !required_services.is_empty() {
-            match self.service_registry.check_required_services(&required_services) {
+            match self
+                .service_registry
+                .check_required_services(&required_services)
+            {
                 Ok(vars) => vars,
                 Err(e) => return e,
             }
@@ -932,7 +935,7 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
 
         let tool_config = tool.clone();
         let mut runtime = self.runtime.clone();
-        
+
         // Inject service environment variables
         for (key, value) in service_env_vars {
             runtime.set_env_var(key, value);
@@ -1046,7 +1049,10 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
             let service_env_vars = if let Some(ref tool_config) = step_tool {
                 let required_services = &tool_config.manifest.requires_services;
                 if !required_services.is_empty() {
-                    match self.service_registry.check_required_services(required_services) {
+                    match self
+                        .service_registry
+                        .check_required_services(required_services)
+                    {
                         Ok(vars) => vars,
                         Err(e) => {
                             results.push(pipeline::StepResult {
@@ -1187,15 +1193,15 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
             .iter()
             .filter(|t| *t.tool_type() == ToolType::Mcp)
             .collect();
-        let mcp_servers: Vec<_> = tools
-            .iter()
-            .filter(|t| t.mcp_server().is_some())
-            .collect();
+        let mcp_servers: Vec<_> = tools.iter().filter(|t| t.mcp_server().is_some()).collect();
 
         let mut output = format!("📦 Available Tools ({} total)\n\n", tools.len());
 
         if !mcp_servers.is_empty() {
-            output.push_str(&format!("### 🌐 External MCP Servers ({})\n\n", mcp_servers.len()));
+            output.push_str(&format!(
+                "### 🌐 External MCP Servers ({})\n\n",
+                mcp_servers.len()
+            ));
             for tool in &mcp_servers {
                 output.push_str(&format!("• **{}** - {}\n", tool.name(), tool.description()));
             }
@@ -1225,7 +1231,10 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
         }
 
         if !pipeline_tools.is_empty() {
-            output.push_str(&format!("### ⛓️ Pipeline Tools ({})\n\n", pipeline_tools.len()));
+            output.push_str(&format!(
+                "### ⛓️ Pipeline Tools ({})\n\n",
+                pipeline_tools.len()
+            ));
             for tool in pipeline_tools {
                 output.push_str(&format!("• **{}** - {}\n", tool.name(), tool.description()));
             }
@@ -1234,25 +1243,38 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
 
         if !external_tools.is_empty() {
             // Group external tools by namespace
-            let mut by_namespace: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
+            let mut by_namespace: std::collections::HashMap<String, Vec<_>> =
+                std::collections::HashMap::new();
             for tool in &external_tools {
                 if tool.mcp_server().is_none() {
-                    let ns = tool.namespace.clone().unwrap_or_else(|| "unknown".to_string());
+                    let ns = tool
+                        .namespace
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string());
                     by_namespace.entry(ns).or_default().push(tool);
                 }
             }
 
             if !by_namespace.is_empty() {
-                output.push_str(&format!("### 🔗 Proxied Tools ({})\n\n", external_tools.len() - mcp_servers.len()));
+                output.push_str(&format!(
+                    "### 🔗 Proxied Tools ({})\n\n",
+                    external_tools.len() - mcp_servers.len()
+                ));
                 for (namespace, ns_tools) in by_namespace.iter() {
                     output.push_str(&format!("**[{}]** ({} tools)\n", namespace, ns_tools.len()));
                     for tool in ns_tools {
                         // Strip the namespace prefix for cleaner display
-                        let short_name = tool.name().strip_prefix(&format!("{}_", namespace))
+                        let short_name = tool
+                            .name()
+                            .strip_prefix(&format!("{}_", namespace))
                             .unwrap_or(tool.name());
-                        output.push_str(&format!("  • `{}` - {}\n", short_name, 
-                            tool.description().strip_prefix(&format!("[{}] ", namespace))
-                                .unwrap_or(tool.description())));
+                        output.push_str(&format!(
+                            "  • `{}` - {}\n",
+                            short_name,
+                            tool.description()
+                                .strip_prefix(&format!("[{}] ", namespace))
+                                .unwrap_or(tool.description())
+                        ));
                     }
                 }
                 output.push('\n');
@@ -1426,11 +1448,15 @@ import_mcp(name: "github", command: "uvx", args: ["mcp-server-github"])"#
     async fn import_mcp(&self, Parameters(args): Parameters<RegisterMcpArgs>) -> String {
         let namespace = args.name.clone();
         let new_args = args.args.clone().unwrap_or_default();
-        
+
         // Check if namespace already exists (either as tool or server)
         let existing = self.registry.get_tool(&namespace);
         if existing.is_some() && !args.overwrite.unwrap_or(false) {
-            let disabled_msg = if existing.as_ref().map(|t| t.manifest.disabled).unwrap_or(false) {
+            let disabled_msg = if existing
+                .as_ref()
+                .map(|t| t.manifest.disabled)
+                .unwrap_or(false)
+            {
                 " (currently disabled - use overwrite: true to re-enable)"
             } else {
                 ""
@@ -1440,7 +1466,7 @@ import_mcp(name: "github", command: "uvx", args: ["mcp-server-github"])"#
                 namespace, disabled_msg
             );
         }
-        
+
         // Check if another MCP server with the same command+args already exists
         for tool in self.registry.list_tools() {
             if let Some(mcp) = tool.mcp_server() {
@@ -1470,7 +1496,9 @@ import_mcp(name: "github", command: "uvx", args: ["mcp-server-github"])"#
         // MCP type only has mcp_server coordinates, no input_schema or annotations
         let mut manifest = registry::ToolManifest::new(
             namespace.clone(),
-            args.description.clone().unwrap_or_else(|| format!("External MCP server: {}", namespace)),
+            args.description
+                .clone()
+                .unwrap_or_else(|| format!("External MCP server: {}", namespace)),
             registry::ToolType::Mcp,
         );
         manifest.mcp_server = Some(mcp_config);
@@ -1491,7 +1519,11 @@ import_mcp(name: "github", command: "uvx", args: ["mcp-server-github"])"#
         };
 
         // Register and start the server
-        if let Err(e) = self.client_manager.register_server(namespace.clone(), server_config).await {
+        if let Err(e) = self
+            .client_manager
+            .register_server(namespace.clone(), server_config)
+            .await
+        {
             return format!("❌ Failed to start MCP server: {}", e);
         }
 
@@ -1509,8 +1541,13 @@ import_mcp(name: "github", command: "uvx", args: ["mcp-server-github"])"#
                         let mut manifest = tool;
                         manifest.name = local_name.clone();
                         manifest.description = format!("[{}] {}", namespace, manifest.description);
-                        
-                        if let Err(e) = self.registry.register_external_tool(manifest, namespace.clone(), remote_name.clone(), namespace.clone()) {
+
+                        if let Err(e) = self.registry.register_external_tool(
+                            manifest,
+                            namespace.clone(),
+                            remote_name.clone(),
+                            namespace.clone(),
+                        ) {
                             eprintln!("Failed to register external tool {}: {}", local_name, e);
                         } else {
                             discovered_tools.push(local_name);
@@ -1541,7 +1578,11 @@ import_mcp(name: "github", command: "uvx", args: ["mcp-server-github"])"#
                 Tools are ready to use with `call_tool(tool_name: \"...\")`",
                 namespace,
                 discovered_tools.len(),
-                discovered_tools.iter().map(|t| format!("- `{}`", t)).collect::<Vec<_>>().join("\n"),
+                discovered_tools
+                    .iter()
+                    .map(|t| format!("- `{}`", t))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
                 namespace
             )
         }
@@ -3102,7 +3143,10 @@ request = json.loads(sys.stdin.read())
                     ToolType::Mcp => (
                         "MCP",
                         "🌐",
-                        format!("Server ID: {}", tool.server_id.as_deref().unwrap_or("unknown")),
+                        format!(
+                            "Server ID: {}",
+                            tool.server_id.as_deref().unwrap_or("unknown")
+                        ),
                     ),
                 };
                 let version_info = format!("- **Version:** {}\n", tool.manifest.version);
@@ -3372,40 +3416,48 @@ async fn main() -> Result<()> {
 
     // Initialize client manager
     let client_manager = Arc::new(client::McpClientManager::new());
-    
+
     // Spawn MCP server startup in background (non-blocking)
     // This prevents slow MCP servers from blocking Skillz initialization
     // All servers start in PARALLEL with 30s timeout each
     let cm_for_startup = client_manager.clone();
     let registry_for_startup = registry.clone();
     let config_servers = config.servers;
-    
+
     const SERVER_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-    
+
     tokio::spawn(async move {
         // Collect all servers to start
         let mut server_tasks = Vec::new();
-        
+
         // Add servers from skillz.toml (ephemeral)
         for (id, server_config) in config_servers {
             if !server_config.disabled {
                 let cm = cm_for_startup.clone();
                 let reg = registry_for_startup.clone();
                 let namespace = id.clone();
-                
+
                 server_tasks.push(tokio::spawn(async move {
-                    let result = start_single_server(&cm, &reg, namespace.clone(), server_config, SERVER_STARTUP_TIMEOUT).await;
+                    let result = start_single_server(
+                        &cm,
+                        &reg,
+                        namespace.clone(),
+                        server_config,
+                        SERVER_STARTUP_TIMEOUT,
+                    )
+                    .await;
                     (namespace, result, false) // false = ephemeral, don't persist disable
                 }));
             }
         }
 
         // Add persisted MCP servers (skip disabled ones)
-        let mcp_tools: Vec<_> = registry_for_startup.list_tools()
+        let mcp_tools: Vec<_> = registry_for_startup
+            .list_tools()
             .into_iter()
             .filter(|t| t.mcp_server().is_some() && !t.manifest.disabled)
             .collect();
-            
+
         for tool in mcp_tools {
             if let Some(mcp_config) = tool.mcp_server() {
                 let server_config = config::ServerConfig {
@@ -3414,24 +3466,31 @@ async fn main() -> Result<()> {
                     env: mcp_config.env.clone(),
                     disabled: false,
                 };
-                
+
                 let cm = cm_for_startup.clone();
                 let reg = registry_for_startup.clone();
                 let namespace = tool.name().to_string();
-                
+
                 server_tasks.push(tokio::spawn(async move {
-                    let result = start_single_server(&cm, &reg, namespace.clone(), server_config, SERVER_STARTUP_TIMEOUT).await;
+                    let result = start_single_server(
+                        &cm,
+                        &reg,
+                        namespace.clone(),
+                        server_config,
+                        SERVER_STARTUP_TIMEOUT,
+                    )
+                    .await;
                     (namespace, result, true) // true = persisted, can disable on failure
                 }));
             }
         }
-        
+
         // Wait for all servers to start (in parallel)
         let results = futures::future::join_all(server_tasks).await;
-        
+
         let mut success_count = 0;
         let mut fail_count = 0;
-        
+
         for result in results {
             if let Ok((namespace, success, is_persisted)) = result {
                 if success {
@@ -3440,7 +3499,10 @@ async fn main() -> Result<()> {
                     fail_count += 1;
                     // Mark persisted servers as disabled on failure
                     if is_persisted {
-                        eprintln!("[mcp] Marking {} as disabled due to startup failure", namespace);
+                        eprintln!(
+                            "[mcp] Marking {} as disabled due to startup failure",
+                            namespace
+                        );
                         if let Err(e) = registry_for_startup.disable_tool(&namespace) {
                             eprintln!("[mcp] Failed to disable {}: {}", namespace, e);
                         }
@@ -3448,10 +3510,13 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
-        eprintln!("[mcp] Background startup complete: {} succeeded, {} failed", success_count, fail_count);
+
+        eprintln!(
+            "[mcp] Background startup complete: {} succeeded, {} failed",
+            success_count, fail_count
+        );
     });
-    
+
     // Helper function for starting a single server (defined outside spawn for cleaner code)
     async fn start_single_server(
         cm: &client::McpClientManager,
@@ -3460,18 +3525,23 @@ async fn main() -> Result<()> {
         server_config: config::ServerConfig,
         timeout: std::time::Duration,
     ) -> bool {
-        eprintln!("[mcp] Starting server: {} (timeout: {}s)", namespace, timeout.as_secs());
-        
+        eprintln!(
+            "[mcp] Starting server: {} (timeout: {}s)",
+            namespace,
+            timeout.as_secs()
+        );
+
         // Try to register with timeout
         let result = tokio::time::timeout(
             timeout,
-            cm.register_server(namespace.clone(), server_config)
-        ).await;
-        
+            cm.register_server(namespace.clone(), server_config),
+        )
+        .await;
+
         match result {
             Ok(Ok(())) => {
                 eprintln!("[mcp] Server {} connected, discovering tools...", namespace);
-                
+
                 // Try to discover tools with timeout
                 if let Some(client) = cm.get_client(&namespace).await {
                     match tokio::time::timeout(timeout, client.list_tools()).await {
@@ -3482,9 +3552,15 @@ async fn main() -> Result<()> {
                                 let local_name = format!("{}_{}", namespace, remote_name);
                                 let mut manifest = tool;
                                 manifest.name = local_name.clone();
-                                manifest.description = format!("[{}] {}", namespace, manifest.description);
-                                
-                                if let Err(e) = registry.register_external_tool(manifest, namespace.clone(), remote_name, namespace.clone()) {
+                                manifest.description =
+                                    format!("[{}] {}", namespace, manifest.description);
+
+                                if let Err(e) = registry.register_external_tool(
+                                    manifest,
+                                    namespace.clone(),
+                                    remote_name,
+                                    namespace.clone(),
+                                ) {
                                     eprintln!("[mcp] Failed to register {}: {}", local_name, e);
                                 }
                             }
@@ -3510,7 +3586,13 @@ async fn main() -> Result<()> {
         false
     }
 
-    let state = AppState::new(registry, runtime, memory, client_manager, storage_dir.clone());
+    let state = AppState::new(
+        registry,
+        runtime,
+        memory,
+        client_manager,
+        storage_dir.clone(),
+    );
 
     // Start hot reload if enabled
     let _hot_reload = if cli.hot_reload {

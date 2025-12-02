@@ -4,13 +4,13 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use wasmtime::{Engine, Linker, Module, Store};
 use wasmtime_wasi::preview1::{self, WasiP1Ctx};
 use wasmtime_wasi::{pipe::MemoryOutputPipe, WasiCtxBuilder};
-use std::sync::Arc;
 
-use crate::registry::{ToolConfig, ToolType};
 use crate::client::McpClientManager;
+use crate::registry::{ToolConfig, ToolType};
 
 // ==================== Sandbox Configuration ====================
 
@@ -758,7 +758,7 @@ impl ToolRuntime {
                             let server_id = server_id.clone();
                             let remote_name = remote_name.clone();
                             let args = args.clone();
-                            
+
                             return handle.block_on(async move {
                                 if let Some(client) = manager.get_client(&server_id).await {
                                     client.call_tool(&remote_name, args).await

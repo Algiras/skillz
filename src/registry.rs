@@ -893,14 +893,14 @@ impl ToolRegistry {
         let mut tools = self.tools.write().unwrap();
         if let Some(config) = tools.get_mut(name) {
             config.manifest.disabled = true;
-            
+
             // Update the manifest file on disk
             let manifest_path = config.tool_dir.join("manifest.json");
             if manifest_path.exists() {
                 let json = serde_json::to_string_pretty(&config.manifest)?;
                 fs::write(&manifest_path, json)?;
             }
-            
+
             eprintln!("Disabled tool: {}", name);
             Ok(())
         } else {
@@ -913,14 +913,14 @@ impl ToolRegistry {
         let mut tools = self.tools.write().unwrap();
         if let Some(config) = tools.get_mut(name) {
             config.manifest.disabled = false;
-            
+
             // Update the manifest file on disk
             let manifest_path = config.tool_dir.join("manifest.json");
             if manifest_path.exists() {
                 let json = serde_json::to_string_pretty(&config.manifest)?;
                 fs::write(&manifest_path, json)?;
             }
-            
+
             eprintln!("Enabled tool: {}", name);
             Ok(())
         } else {

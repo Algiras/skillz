@@ -167,8 +167,8 @@ impl ServiceRegistry {
     /// Save a service definition to disk
     fn save_definition(&self, def: &ServiceDefinition) -> Result<(), String> {
         let path = self.services_dir.join(format!("{}.json", def.name));
-        let content = serde_json::to_string_pretty(def)
-            .map_err(|e| format!("Failed to serialize: {}", e))?;
+        let content =
+            serde_json::to_string_pretty(def).map_err(|e| format!("Failed to serialize: {}", e))?;
         std::fs::write(&path, content).map_err(|e| format!("Failed to write: {}", e))?;
         Ok(())
     }
@@ -303,10 +303,7 @@ impl ServiceRegistry {
     /// Get port mappings for a container
     fn get_port_mappings(&self, container_name: &str) -> Result<HashMap<String, String>, String> {
         let output = Command::new("docker")
-            .args([
-                "port",
-                container_name,
-            ])
+            .args(["port", container_name])
             .output()
             .map_err(|e| format!("Docker command failed: {}", e))?;
 
@@ -318,10 +315,7 @@ impl ServiceRegistry {
                 // Format: "5432/tcp -> 0.0.0.0:32768"
                 if let Some((container_port, host_binding)) = line.split_once(" -> ") {
                     let container_port = container_port.split('/').next().unwrap_or(container_port);
-                    let host_port = host_binding
-                        .rsplit(':')
-                        .next()
-                        .unwrap_or(host_binding);
+                    let host_port = host_binding.rsplit(':').next().unwrap_or(host_binding);
                     ports.insert(container_port.to_string(), host_port.to_string());
                 }
             }
@@ -550,7 +544,11 @@ impl ServiceRegistry {
         Ok(format!(
             "Service '{}' removed{}",
             name,
-            if remove_volumes { " (with volumes)" } else { "" }
+            if remove_volumes {
+                " (with volumes)"
+            } else {
+                ""
+            }
         ))
     }
 
@@ -590,13 +588,7 @@ impl ServiceRegistry {
 
         // Remove stopped skillz containers
         let output = Command::new("docker")
-            .args([
-                "container",
-                "prune",
-                "-f",
-                "--filter",
-                "name=skillz_svc_",
-            ])
+            .args(["container", "prune", "-f", "--filter", "name=skillz_svc_"])
             .output()
             .map_err(|e| format!("Failed to prune containers: {}", e))?;
 
@@ -605,13 +597,7 @@ impl ServiceRegistry {
         if include_volumes {
             // Remove unused skillz volumes
             let output = Command::new("docker")
-                .args([
-                    "volume",
-                    "prune",
-                    "-f",
-                    "--filter",
-                    "name=skillz_",
-                ])
+                .args(["volume", "prune", "-f", "--filter", "name=skillz_"])
                 .output()
                 .map_err(|e| format!("Failed to prune volumes: {}", e))?;
 
@@ -656,10 +642,7 @@ impl ServiceRegistry {
 
                         // Also add container name for inter-service communication
                         if let Some(def) = self.get(name) {
-                            env_vars.insert(
-                                format!("{}_CONTAINER", prefix),
-                                def.container_name(),
-                            );
+                            env_vars.insert(format!("{}_CONTAINER", prefix), def.container_name());
                         }
                     } else {
                         stopped.push((name.clone(), status.status));

@@ -262,11 +262,7 @@ Variable syntax:
             )
             .with_arg("name", "Namespace for the server's tools", true)
             .with_arg("package", "NPM or PyPI package name", true)
-            .with_arg(
-                "runner",
-                "Package runner: npx, uvx, or command path",
-                false,
-            )
+            .with_arg("runner", "Package runner: npx, uvx, or command path", false)
             .with_message(
                 "user",
                 r#"Import an external MCP server into Skillz:
