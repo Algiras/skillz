@@ -178,6 +178,75 @@ Each tool is stored in its own directory with a shareable `manifest.json`:
 }
 ```
 
+## 🐳 Docker Services
+
+Tools can declare dependencies on Docker services (databases, caches, message queues, etc.). Skillz manages service lifecycle and injects connection environment variables when tools run.
+
+### Services Tool Reference
+
+```python
+# Define a new service
+services(
+  action: "define",
+  name: "service_name",           # Unique identifier
+  image: "image:tag",             # Docker image
+  ports: ["5432", "8080:80"],     # Port mappings (container or host:container)
+  env: {"KEY": "value"},          # Environment variables
+  volumes: ["data:/path"],        # Volume mounts
+  network: "custom_network",      # Optional custom network
+  healthcheck: {
+    cmd: "health command",        # Health check command
+    interval: "2s",               # Check interval
+    retries: 15,                  # Max retries
+    timeout: "30s"                # Timeout per check
+  }
+)
+
+# Available actions
+services(action: "list")                          # List all services
+services(action: "start", name: "service")        # Start service
+services(action: "stop", name: "service")         # Stop service
+services(action: "remove", name: "service")       # Remove service definition
+services(action: "logs", name: "service", tail: 100)  # View logs
+services(action: "status", name: "service")       # Get status, ports, health
+services(action: "prune")                         # Remove unused containers
+```
+
+### Tool with Service Dependencies
+
+When registering a script, specify required services:
+
+```python
+register_script(
+  name: "my_tool",
+  requires_services: ["postgres", "redis"],  # Services that must be running
+  ...
+)
+```
+
+When the tool is called:
+1. Skillz checks if all required services are running
+2. If not running, returns an error: `"Service 'postgres' is not running. Start it with: services(action: 'start', name: 'postgres')"`
+3. If running, injects environment variables: `{SERVICE_NAME}_HOST`, `{SERVICE_NAME}_PORT`
+
+### Injected Environment Variables
+
+For each required service, these env vars are set:
+- `{NAME}_HOST` - Container hostname (e.g., `POSTGRES_HOST=skillz_svc_postgres`)
+- `{NAME}_PORT` - First exposed port (e.g., `POSTGRES_PORT=5432`)
+
+### Volume Types
+
+| Syntax | Description |
+|--------|-------------|
+| `name:/path` | Named volume (auto-prefixed with `skillz_`) |
+| `/host/path:/container/path` | Bind mount from host |
+
+### Container Naming
+
+- All containers: `skillz_svc_{service_name}`
+- Default network: `skillz_services`
+
 ## 💡 Advanced Examples
 
 ### 🦀 WASM Tool with Rust Dependencies

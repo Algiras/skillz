@@ -194,6 +194,7 @@ curl -X POST http://localhost:8080/message \
 | 🏷️ **Tool Annotations** | Hints for clients (readOnly, destructive, idempotent) |
 | ⚡ **Code Execution** | Compose multiple tools via code (98% token savings!) |
 | 📦 **Dependencies** | Auto-install pip/npm/cargo packages per tool |
+| 🐳 **Docker Services** | Define & manage Docker services tools depend on |
 | 💾 **Persistence** | Tools survive server restarts |
 | 🔒 **Sandbox** | Optional bubblewrap/firejail/nsjail isolation |
 | 📂 **Shareable** | Each tool has its own directory with manifest.json |
@@ -218,7 +219,7 @@ curl -X POST http://localhost:8080/message \
 
 ---
 
-## 📖 Available Tools (10 Core)
+## 📖 Available Tools (11 Core)
 
 | Tool | Description |
 |------|-------------|
@@ -233,6 +234,7 @@ curl -X POST http://localhost:8080/message \
 | `pipeline` | Create, list, delete pipeline tools (action-based) |
 | `memory` | Persistent storage for tools (store, get, list, delete, stats) |
 | `version` | List versions, rollback to previous, view version info |
+| `services` | Define & manage Docker services for tools |
 
 ---
 
@@ -322,6 +324,96 @@ api_key = env.get("SKILLZ_OPENAI_KEY")
 ```
 
 > **Note:** Only `SKILLZ_*` vars are forwarded. Other env vars are not exposed to tools for security.
+
+---
+
+## 🐳 Docker Services
+
+Tools can declare dependencies on Docker services (databases, caches, etc.). When a tool runs, Skillz checks if required services are running and injects connection environment variables.
+
+### Define a Service
+
+```python
+services(
+  action: "define",
+  name: "postgres",
+  image: "postgres:15",
+  ports: ["5432"],
+  env: {"POSTGRES_PASSWORD": "dev"},
+  volumes: ["data:/var/lib/postgresql/data"],
+  healthcheck: {
+    cmd: "pg_isready -U postgres",
+    interval: "2s",
+    retries: 15
+  }
+)
+```
+
+### Manage Services
+
+```python
+# List all defined services
+services(action: "list")
+
+# Start a service
+services(action: "start", name: "postgres")
+
+# Check status (running, ports, health)
+services(action: "status", name: "postgres")
+
+# View logs
+services(action: "logs", name: "postgres", tail: 100)
+
+# Stop/remove services
+services(action: "stop", name: "postgres")
+services(action: "remove", name: "postgres")
+
+# Cleanup unused services
+services(action: "prune")
+```
+
+### Tools with Service Dependencies
+
+Register a tool that requires services:
+
+```python
+register_script(
+  name: "user_manager",
+  description: "Manage users in PostgreSQL",
+  interpreter: "python3",
+  requires_services: ["postgres"],  # Tool requires postgres to be running
+  dependencies: ["psycopg2-binary"],
+  code: """
+import json, sys, os
+import psycopg2
+
+request = json.loads(sys.stdin.readline())
+args = request["params"]["arguments"]
+
+# Connection details injected by Skillz
+conn = psycopg2.connect(
+    host=os.environ["POSTGRES_HOST"],  # Auto-injected
+    port=os.environ["POSTGRES_PORT"],  # Auto-injected
+    user="postgres",
+    password="dev",
+    dbname="postgres"
+)
+# ... your code
+"""
+)
+```
+
+When calling `user_manager`, Skillz will:
+1. Check if `postgres` service is running
+2. If not running, return a helpful error with fix command
+3. If running, inject `POSTGRES_HOST` and `POSTGRES_PORT` env vars
+
+### Volume Types
+
+| Type | Syntax | Description |
+|------|--------|-------------|
+| **Named** | `data:/path` | Docker-managed volume, prefixed with `skillz_` |
+| **Bind** | `/host/path:/container/path` | Mount host directory into container |
 
 ---
 

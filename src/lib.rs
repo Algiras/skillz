@@ -12,4 +12,5 @@ pub mod pipeline;
 pub mod prompts;
 pub mod registry;
 pub mod runtime;
+pub mod services;
 pub mod watcher;

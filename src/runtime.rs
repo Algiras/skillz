@@ -580,6 +580,8 @@ pub struct ToolRuntime {
     stream_handler: Option<StreamHandler>,
     /// Manager for external MCP clients
     client_manager: Option<Arc<McpClientManager>>,
+    /// Extra environment variables to inject (e.g., from services)
+    extra_env: std::collections::HashMap<String, String>,
 }
 
 impl ToolRuntime {
@@ -614,6 +616,7 @@ impl ToolRuntime {
             tool_call_handler: None,
             stream_handler: None,
             client_manager: None,
+            extra_env: std::collections::HashMap::new(),
         })
     }
 
@@ -635,6 +638,7 @@ impl ToolRuntime {
             tool_call_handler: None,
             stream_handler: None,
             client_manager: None,
+            extra_env: std::collections::HashMap::new(),
         })
     }
 
@@ -643,6 +647,11 @@ impl ToolRuntime {
         self.memory = Some(memory);
         self.context.capabilities.memory = true;
         self
+    }
+
+    /// Add an environment variable to be injected when running tools
+    pub fn set_env_var(&mut self, key: String, value: String) {
+        self.extra_env.insert(key, value);
     }
 
     /// Set elicitation handler (for user input requests)
@@ -886,6 +895,11 @@ impl ToolRuntime {
         // Apply sandbox wrapper if configured
         self.sandbox_config
             .wrap_command(&mut cmd, &config.script_path, &sandbox_roots);
+
+        // Inject extra environment variables (e.g., from services)
+        for (key, value) in &self.extra_env {
+            cmd.env(key, value);
+        }
 
         // Set up the process
         let mut child = cmd

@@ -7,6 +7,7 @@ mod pipeline;
 mod prompts;
 mod registry;
 mod runtime;
+mod services;
 mod watcher;
 
 use anyhow::Result;
@@ -109,6 +110,8 @@ struct AppState {
     client_manager: Arc<client::McpClientManager>,
     /// Prompt registry for built-in prompts
     prompt_registry: prompts::PromptRegistry,
+    /// Service registry for Docker services
+    service_registry: services::ServiceRegistry,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -164,6 +167,9 @@ struct RegisterScriptArgs {
     /// Dependencies to install (pip packages for Python, npm packages for Node.js)
     /// Example: ["requests", "pandas"] for Python, ["axios", "lodash"] for Node.js
     dependencies: Option<Vec<String>>,
+    /// Docker services this tool requires. The services must be defined and running.
+    /// Example: ["postgres", "redis"] - tool will receive POSTGRES_HOST, REDIS_PORT, etc.
+    requires_services: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema)]
@@ -264,6 +270,52 @@ struct RegisterMcpArgs {
     overwrite: Option<bool>,
 }
 
+// ==================== Services Args ====================
+
+/// Health check configuration for a Docker service
+#[derive(Clone, Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct HealthCheckArg {
+    /// Command to run inside the container (e.g., "pg_isready -U postgres")
+    cmd: String,
+    /// Interval between checks (e.g., "2s", "500ms")
+    interval: Option<String>,
+    /// Number of retries before giving up
+    retries: Option<u32>,
+    /// Timeout for each check
+    timeout: Option<String>,
+}
+
+/// Manage Docker services for tools
+#[derive(Deserialize, Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+struct ServicesArgs {
+    /// Action: 'define', 'list', 'start', 'stop', 'remove', 'logs', 'status', 'prune'
+    action: String,
+    /// Service name (required for define/start/stop/remove/logs/status)
+    name: Option<String>,
+    /// Docker image (e.g., "postgres:15", "redis:alpine") - required for define
+    image: Option<String>,
+    /// Port mappings: ["5432"] for random host port, or ["5432:5432"] for fixed
+    ports: Option<Vec<String>>,
+    /// Environment variables for the container
+    env: Option<std::collections::HashMap<String, String>>,
+    /// Volume mounts: ["data:/var/lib/data", "/host/path:/container/path"]
+    volumes: Option<Vec<String>>,
+    /// Health check configuration
+    healthcheck: Option<HealthCheckArg>,
+    /// Service description
+    description: Option<String>,
+    /// Allow overwriting existing service definition
+    overwrite: Option<bool>,
+    /// Number of log lines to tail (for logs action)
+    tail: Option<u32>,
+    /// Also remove volumes when removing service
+    remove_volumes: Option<bool>,
+    /// Also remove volumes when pruning (for prune action)
+    include_volumes: Option<bool>,
+}
+
 /// Unified pipeline management
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
@@ -304,11 +356,15 @@ impl AppState {
         mut runtime: runtime::ToolRuntime,
         memory: memory::Memory,
         client_manager: Arc<client::McpClientManager>,
+        storage_dir: std::path::PathBuf,
     ) -> Self {
         let peer: SharedPeer = Arc::new(RwLock::new(None));
 
         // Pass client manager to runtime
         runtime = runtime.with_client_manager(client_manager.clone());
+
+        // Initialize service registry
+        let service_registry = services::ServiceRegistry::new(&storage_dir);
 
         // Set up logging handler that forwards to MCP peer
         let peer_for_logging = peer.clone();
@@ -568,6 +624,7 @@ impl AppState {
             subscriptions: Arc::new(RwLock::new(std::collections::HashSet::new())),
             client_manager,
             prompt_registry: prompts::PromptRegistry::new_with_defaults(),
+            service_registry,
         }
     }
 
@@ -702,6 +759,7 @@ Note: Check context.capabilities before using elicitation/sampling - not all cli
         manifest.output_schema = args.output_schema.map(registry::ToolSchema::from_value);
         manifest.annotations = args.annotations.map(registry::ToolAnnotations::from_value);
         manifest.dependencies = args.dependencies.clone().unwrap_or_default();
+        manifest.requires_services = args.requires_services.clone().unwrap_or_default();
 
         // Register the tool (this creates the directory and saves the script)
         let config = match self.registry.register_tool(manifest, args.code.as_bytes()) {
@@ -854,6 +912,17 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
             None => return format!("Error: Tool '{}' not found", args.tool_name),
         };
 
+        // Check required services and get service environment variables
+        let required_services = tool.manifest.requires_services.clone();
+        let service_env_vars = if !required_services.is_empty() {
+            match self.service_registry.check_required_services(&required_services) {
+                Ok(vars) => vars,
+                Err(e) => return e,
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
+
         let tool_args = args.arguments.unwrap_or(serde_json::json!({}));
 
         // Handle pipeline tools specially
@@ -863,6 +932,11 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
 
         let tool_config = tool.clone();
         let mut runtime = self.runtime.clone();
+        
+        // Inject service environment variables
+        for (key, value) in service_env_vars {
+            runtime.set_env_var(key, value);
+        }
 
         // Update runtime with actual MCP client capabilities
         let mcp_caps = self.get_client_caps().await;
@@ -967,8 +1041,44 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
             };
 
             // Execute the step's tool
-            let result = self
-                .runtime
+            // First, check service dependencies and get env vars
+            let step_tool = self.registry.get_tool(&step.tool);
+            let service_env_vars = if let Some(ref tool_config) = step_tool {
+                let required_services = &tool_config.manifest.requires_services;
+                if !required_services.is_empty() {
+                    match self.service_registry.check_required_services(required_services) {
+                        Ok(vars) => vars,
+                        Err(e) => {
+                            results.push(pipeline::StepResult {
+                                step_index: i,
+                                step_name: step.name.clone(),
+                                tool: step.tool.clone(),
+                                success: false,
+                                output: serde_json::json!(null),
+                                error: Some(e),
+                                duration_ms: step_start.elapsed().as_millis() as u64,
+                            });
+                            if !step.continue_on_error {
+                                pipeline_success = false;
+                                break;
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    std::collections::HashMap::new()
+                }
+            } else {
+                std::collections::HashMap::new()
+            };
+
+            // Clone runtime and inject service env vars
+            let mut step_runtime = self.runtime.clone();
+            for (key, value) in service_env_vars {
+                step_runtime.set_env_var(key, value);
+            }
+
+            let result = step_runtime
                 .call_tool_by_name(&step.tool, Some(resolved_args), &self.registry)
                 .await;
             let duration_ms = step_start.elapsed().as_millis() as u64;
@@ -1434,6 +1544,183 @@ import_mcp(name: "github", command: "uvx", args: ["mcp-server-github"])"#
                 discovered_tools.iter().map(|t| format!("- `{}`", t)).collect::<Vec<_>>().join("\n"),
                 namespace
             )
+        }
+    }
+
+    // ==================== DOCKER SERVICES ====================
+
+    #[tool(
+        description = r#"Manage Docker services for tools. Define, start, stop, and manage containers that tools depend on.
+
+Actions: 'define', 'list', 'start', 'stop', 'remove', 'logs', 'status', 'prune'
+
+Define a reusable service:
+services(
+  action: "define",
+  name: "postgres",
+  image: "postgres:15",
+  ports: ["5432"],
+  env: { "POSTGRES_PASSWORD": "dev" },
+  volumes: ["postgres_data:/var/lib/postgresql/data"],
+  healthcheck: { cmd: "pg_isready -U postgres", interval: "2s", retries: 15 }
+)
+
+Then in your script tool, use requires_services: ["postgres"] to ensure it's running.
+The tool will receive POSTGRES_HOST, POSTGRES_PORT environment variables.
+
+Other actions:
+- list: Show all defined services and their status
+- start: Start a service (services(action: "start", name: "postgres"))
+- stop: Stop a service (keeps container for restart)
+- remove: Remove service definition and container (remove_volumes: true to also delete volumes)
+- logs: View logs (tail: 50 for last 50 lines)
+- status: Check if service is running/healthy
+- prune: Remove stopped containers (include_volumes: true for unused volumes)"#
+    )]
+    async fn services(&self, Parameters(args): Parameters<ServicesArgs>) -> String {
+        match args.action.as_str() {
+            "define" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for define action".to_string(),
+                };
+                let image = match &args.image {
+                    Some(i) => i.clone(),
+                    None => return "❌ Error: 'image' is required for define action".to_string(),
+                };
+
+                let healthcheck = args.healthcheck.map(|hc| services::HealthCheck {
+                    cmd: hc.cmd,
+                    interval: hc.interval.unwrap_or_else(|| "2s".to_string()),
+                    retries: hc.retries.unwrap_or(15),
+                    timeout: hc.timeout.unwrap_or_else(|| "5s".to_string()),
+                });
+
+                let def = services::ServiceDefinition {
+                    name: name.clone(),
+                    image,
+                    ports: args.ports.unwrap_or_default(),
+                    env: args.env.unwrap_or_default(),
+                    volumes: args.volumes.unwrap_or_default(),
+                    healthcheck,
+                    description: args.description,
+                    network: "skillz_services".to_string(),
+                };
+
+                match self.service_registry.define(def, args.overwrite.unwrap_or(false)) {
+                    Ok(msg) => format!("✅ {}\n\n💡 Start with: services(action: \"start\", name: \"{}\")", msg, name),
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "list" => {
+                match self.service_registry.list() {
+                    Ok(statuses) => {
+                        if statuses.is_empty() {
+                            "📦 No services defined yet.\n\n💡 Define one with:\nservices(action: \"define\", name: \"redis\", image: \"redis:alpine\", ports: [\"6379\"])".to_string()
+                        } else {
+                            let mut output = String::from("📦 **Defined Services**\n\n");
+                            for status in statuses {
+                                let icon = match status.status.as_str() {
+                                    "running" => "🟢",
+                                    "exited" | "stopped" => "🔴",
+                                    "not_created" => "⚪",
+                                    _ => "🟡",
+                                };
+                                let health = status.health.map(|h| format!(" ({})", h)).unwrap_or_default();
+                                let ports = if status.ports.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" → {}", status.ports.iter().map(|(c, h)| format!("{}:{}", h, c)).collect::<Vec<_>>().join(", "))
+                                };
+                                output.push_str(&format!("{} **{}**: {}{}{}\n", icon, status.name, status.status, health, ports));
+                            }
+                            output
+                        }
+                    }
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "start" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for start action".to_string(),
+                };
+                match self.service_registry.start(&name) {
+                    Ok(status) => {
+                        let ports = if status.ports.is_empty() {
+                            String::new()
+                        } else {
+                            format!("\n📡 Ports: {}", status.ports.iter().map(|(c, h)| format!("localhost:{}→{}", h, c)).collect::<Vec<_>>().join(", "))
+                        };
+                        let health = status.health.map(|h| format!("\n💚 Health: {}", h)).unwrap_or_default();
+                        format!("✅ Service '{}' is running{}{}", name, ports, health)
+                    }
+                    Err(e) => format!("❌ Failed to start '{}': {}", name, e),
+                }
+            }
+            "stop" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for stop action".to_string(),
+                };
+                match self.service_registry.stop(&name) {
+                    Ok(msg) => format!("⏸️ {}", msg),
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "remove" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for remove action".to_string(),
+                };
+                match self.service_registry.remove(&name, args.remove_volumes.unwrap_or(false)) {
+                    Ok(msg) => format!("🗑️ {}", msg),
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "logs" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for logs action".to_string(),
+                };
+                match self.service_registry.logs(&name, args.tail) {
+                    Ok(logs) => format!("📜 **Logs for '{}':**\n```\n{}\n```", name, logs),
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "status" => {
+                let name = match &args.name {
+                    Some(n) => n.clone(),
+                    None => return "❌ Error: 'name' is required for status action".to_string(),
+                };
+                match self.service_registry.get_status(&name) {
+                    Ok(status) => {
+                        let icon = match status.status.as_str() {
+                            "running" => "🟢",
+                            "exited" | "stopped" => "🔴",
+                            "not_created" => "⚪",
+                            _ => "🟡",
+                        };
+                        let container = status.container_id.map(|id| format!("\n📦 Container: {}", id)).unwrap_or_default();
+                        let health = status.health.map(|h| format!("\n💚 Health: {}", h)).unwrap_or_default();
+                        let ports = if status.ports.is_empty() {
+                            String::new()
+                        } else {
+                            format!("\n📡 Ports: {}", status.ports.iter().map(|(c, h)| format!("localhost:{}→{}", h, c)).collect::<Vec<_>>().join(", "))
+                        };
+                        let uptime = status.uptime.map(|u| format!("\n⏱️ Started: {}", u)).unwrap_or_default();
+                        format!("{} **{}**: {}{}{}{}{}", icon, name, status.status, container, health, ports, uptime)
+                    }
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            "prune" => {
+                match self.service_registry.prune(args.include_volumes.unwrap_or(false)) {
+                    Ok(msg) => format!("🧹 Pruned:\n{}", msg),
+                    Err(e) => format!("❌ {}", e),
+                }
+            }
+            _ => format!("❌ Unknown action: '{}'. Use: define, list, start, stop, remove, logs, status, prune", args.action),
         }
     }
 
@@ -3223,7 +3510,7 @@ async fn main() -> Result<()> {
         false
     }
 
-    let state = AppState::new(registry, runtime, memory, client_manager);
+    let state = AppState::new(registry, runtime, memory, client_manager, storage_dir.clone());
 
     // Start hot reload if enabled
     let _hot_reload = if cli.hot_reload {

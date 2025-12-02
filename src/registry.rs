@@ -185,6 +185,9 @@ pub struct ToolManifest {
     /// Whether the tool is disabled (e.g., failed to start)
     #[serde(default, skip_serializing_if = "is_false")]
     pub disabled: bool,
+    /// Docker services this tool requires to be running
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires_services: Vec<String>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -219,6 +222,7 @@ impl ToolManifest {
             created_at: Some(now.clone()),
             updated_at: Some(now),
             disabled: false,
+            requires_services: vec![],
         }
     }
 
@@ -522,6 +526,7 @@ impl ToolRegistry {
                 created_at: Some(chrono_now()),
                 updated_at: Some(chrono_now()),
                 disabled: false,
+                requires_services: vec![],
             };
 
             // Save manifest
