@@ -1,0 +1,35 @@
+project:
+  type: default
+  output-dir: _output
+
+title: "Skillz: A Self-Extending Model Context Protocol Server"
+author: "Algimantas Krasauskas"
+date: last-modified
+
+bibliography: references.bib
+csl: ieee.csl
+link-citations: true
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    code-tools: true
+    number-sections: true
+  pdf:
+    documentclass: article
+    classoption: [11pt]
+    geometry:
+      - margin=1in
+      - paperwidth=8.5in
+      - paperheight=11in
+    keep-tex: false
+    number-sections: true
+    toc: true
+    toc-depth: 2
+    fontfamily: palatino
+    linestretch: 1.15
+    colorlinks: true
+    linkcolor: blue
+    citecolor: blue
+    urlcolor: blue
