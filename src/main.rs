@@ -205,7 +205,7 @@ struct VersionArgs {
 #[schemars(crate = "rmcp::schemars")]
 struct CallToolArgs {
     tool_name: String,
-    arguments: Option<serde_json::Value>,
+    arguments: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 /// Code execution mode - compose multiple tools via code
@@ -926,7 +926,10 @@ Example: `version(action: "rollback", tool_name: "my_tool", version: "1.0.0")`"#
             std::collections::HashMap::new()
         };
 
-        let tool_args = args.arguments.unwrap_or(serde_json::json!({}));
+        let tool_args = args
+            .arguments
+            .map(|args| serde_json::json!(args))
+            .unwrap_or(serde_json::json!({}));
 
         // Handle pipeline tools specially
         if *tool.tool_type() == ToolType::Pipeline {
